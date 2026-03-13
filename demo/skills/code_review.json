@@ -1,0 +1,21 @@
+{
+  "id": "code_review",
+  "name": "Code Review",
+  "description": "Review local code changes for regressions, missing tests, and risky behavior changes.",
+  "tags": [
+    "review",
+    "quality",
+    "regression"
+  ],
+  "examples": [
+    "review this patch for bugs",
+    "identify missing tests in the branch"
+  ],
+  "instructions": [
+    "Prioritize concrete findings over summaries",
+    "Focus on risks, regressions, and missing coverage"
+  ],
+  "metadata": {
+    "owner": "atlas-evolution-demo"
+  }
+}

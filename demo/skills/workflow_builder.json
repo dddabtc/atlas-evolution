@@ -1,0 +1,21 @@
+{
+  "id": "workflow_builder",
+  "name": "Workflow Builder",
+  "description": "Package repeated successful steps into reusable local workflows and runbooks.",
+  "tags": [
+    "workflow",
+    "runbook",
+    "automation"
+  ],
+  "examples": [
+    "turn this repeated process into a workflow",
+    "capture a local runbook from successful sessions"
+  ],
+  "instructions": [
+    "Prefer stable multi-step sequences with clear exit conditions",
+    "Keep generated workflows reviewable by humans"
+  ],
+  "metadata": {
+    "owner": "atlas-evolution-demo"
+  }
+}

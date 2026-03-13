@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas-evolution"
+version = "0.1.0"
+description = "Governed local evolution layer for Atlas-like agents."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+atlas-evolution = "atlas_evolution.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["atlas_evolution*"]
