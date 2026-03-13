@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from difflib import unified_diff
 import json
 from pathlib import Path
 import re
+from typing import Any
 
 from atlas_evolution.models import Skill, SkillMatch
 
@@ -95,17 +97,65 @@ class SkillBank:
                 lines.append(f"  Instructions: {'; '.join(skill.instructions)}")
         return "\n".join(lines)
 
-    def apply_prompt_changes(self, target_id: str, changes: dict[str, object]) -> Path:
+    def preview_prompt_changes(self, target_id: str, changes: dict[str, object]) -> dict[str, Any]:
         if target_id not in self.skills:
             raise KeyError(f"Unknown skill: {target_id}")
         skill = self.skills[target_id]
-        add_tags = [str(tag) for tag in changes.get("add_tags", [])]
-        description_append = str(changes.get("description_append", "")).strip()
-        for tag in add_tags:
-            if tag not in skill.tags:
-                skill.tags.append(tag)
-        if description_append and description_append not in skill.description:
-            skill.description = f"{skill.description} {description_append}".strip()
         path = self.sources[target_id]
-        path.write_text(json.dumps(skill.to_dict(), indent=2) + "\n", encoding="utf-8")
+        updated_skill, operation_summary = self._materialize_prompt_changes(skill, changes)
+        current_text = json.dumps(skill.to_dict(), indent=2) + "\n"
+        proposed_text = json.dumps(updated_skill.to_dict(), indent=2) + "\n"
+        diff = "\n".join(
+            unified_diff(
+                current_text.splitlines(),
+                proposed_text.splitlines(),
+                fromfile=str(path),
+                tofile=f"{path} (proposed)",
+                lineterm="",
+            )
+        )
+        return {
+            "target_id": target_id,
+            "target_path": str(path),
+            "current": skill.to_dict(),
+            "proposed": updated_skill.to_dict(),
+            "operation_summary": operation_summary,
+            "diff": diff + ("\n" if diff else ""),
+        }
+
+    def apply_prompt_changes(self, target_id: str, changes: dict[str, object]) -> Path:
+        if target_id not in self.skills:
+            raise KeyError(f"Unknown skill: {target_id}")
+        updated_skill, _operation_summary = self._materialize_prompt_changes(self.skills[target_id], changes)
+        self.skills[target_id] = updated_skill
+        path = self.sources[target_id]
+        path.write_text(json.dumps(updated_skill.to_dict(), indent=2) + "\n", encoding="utf-8")
         return path
+
+    @staticmethod
+    def _materialize_prompt_changes(skill: Skill, changes: dict[str, object]) -> tuple[Skill, list[str]]:
+        updated_skill = Skill(
+            id=skill.id,
+            name=skill.name,
+            description=skill.description,
+            tags=list(skill.tags),
+            examples=list(skill.examples),
+            instructions=list(skill.instructions),
+            metadata=dict(skill.metadata),
+        )
+        operation_summary: list[str] = []
+        added_tags: list[str] = []
+        for tag in [str(item) for item in changes.get("add_tags", [])]:
+            if tag in updated_skill.tags:
+                continue
+            updated_skill.tags.append(tag)
+            added_tags.append(tag)
+        if added_tags:
+            operation_summary.append("Add tags: " + ", ".join(added_tags))
+        description_append = str(changes.get("description_append", "")).strip()
+        if description_append and description_append not in updated_skill.description:
+            updated_skill.description = f"{updated_skill.description} {description_append}".strip()
+            operation_summary.append(f"Append description text: {description_append}")
+        if not operation_summary:
+            operation_summary.append("No material prompt metadata changes would be applied.")
+        return updated_skill, operation_summary

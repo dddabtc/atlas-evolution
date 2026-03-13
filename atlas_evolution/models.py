@@ -241,6 +241,7 @@ class OperatorEvidenceReport:
     projected_evolution_signals: list[OperatorEvolutionSignal]
     promotion_risk_notes: list[str]
     evidence: dict[str, Any]
+    operator_handoff: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -255,5 +256,6 @@ class OperatorEvidenceReport:
             "projected_evolution_signals": [item.to_dict() for item in self.projected_evolution_signals],
             "promotion_risk_notes": list(self.promotion_risk_notes),
             "evidence": dict(self.evidence),
+            "operator_handoff": dict(self.operator_handoff),
             "metadata": dict(self.metadata),
         }

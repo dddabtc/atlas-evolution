@@ -4,15 +4,24 @@ import argparse
 import json
 from pathlib import Path
 import sys
+
 from atlas_evolution.config import load_config, write_default_config
 from atlas_evolution.evolution.governance import (
     build_governance_payload,
-    build_governance_summary,
+    build_operator_review_payload,
     render_governance_markdown,
+    render_operator_review_markdown,
+    render_promotion_markdown,
 )
 from atlas_evolution.models import EvolutionReport
+from atlas_evolution.runtime.openclaw_adapter import (
+    OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND,
+    build_openclaw_operator_handoff_bundle_payload,
+    parse_openclaw_operator_session_artifact,
+)
 from atlas_evolution.runtime.orchestrator import AtlasOrchestrator
 from atlas_evolution.runtime.proxy import run_server
+from atlas_evolution.workflow_state import build_resume_payload, build_workflow_state, render_resume_markdown
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read JSON from a file. If omitted, JSON is read from stdin.",
     )
 
+    openclaw_import_parser = subparsers.add_parser(
+        "openclaw-import",
+        help="Import a local OpenClaw operator session artifact or replayable handoff bundle into Atlas runtime ledgers.",
+    )
+    openclaw_import_parser.add_argument("--config", default="demo/atlas.toml")
+    openclaw_import_parser.add_argument(
+        "--file",
+        help="Read JSON from a file. If omitted, JSON is read from stdin.",
+    )
+
     report_parser = subparsers.add_parser(
         "report",
         help="Build an operator evidence report from runtime session event payloads.",
@@ -86,11 +105,38 @@ def build_parser() -> argparse.ArgumentParser:
     governance_parser.add_argument("--format", choices=["json", "markdown"], default="json")
     governance_parser.add_argument("--write-report", action="store_true")
 
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Build an operator review queue with ready, risky, rollback-sensitive, and blocked proposals.",
+    )
+    review_parser.add_argument("--config", default="demo/atlas.toml")
+    review_parser.add_argument("--report")
+    review_parser.add_argument("--format", choices=["json", "markdown"], default="json")
+    review_parser.add_argument("--write-report", action="store_true")
+
     promote_parser = subparsers.add_parser(
         "promote",
         help="Apply only proposals that passed the evaluation gate.",
     )
     promote_parser.add_argument("--config", default="demo/atlas.toml")
+    promote_parser.add_argument("--report")
+    promote_parser.add_argument("--proposal-id", action="append", default=[])
+    promote_parser.add_argument(
+        "--resume-last",
+        action="store_true",
+        help="Reuse the last persisted proposal selection and source report from workflow state.",
+    )
+    promote_parser.add_argument("--dry-run", action="store_true")
+    promote_parser.add_argument("--format", choices=["json", "markdown"], default="json")
+    promote_parser.add_argument("--write-report", action="store_true")
+
+    resume_parser = subparsers.add_parser(
+        "resume",
+        help="Show the latest persisted workflow state, artifacts, and resume commands.",
+    )
+    resume_parser.add_argument("--config", default="demo/atlas.toml")
+    resume_parser.add_argument("--format", choices=["json", "markdown"], default="json")
+    resume_parser.add_argument("--write-report", action="store_true")
 
     serve_parser = subparsers.add_parser("serve", help="Run the local HTTP proxy surface.")
     serve_parser.add_argument("--config", default="demo/atlas.toml")
@@ -156,6 +202,57 @@ def _read_report_payloads(file_paths: list[str]) -> list[object]:
     return [json.loads(sys.stdin.read() or "{}")]
 
 
+def _is_openclaw_handoff_bundle(payload: object) -> bool:
+    return isinstance(payload, dict) and payload.get("report_kind") == OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND
+
+
+def _persist_openclaw_import_chain(
+    orchestrator: AtlasOrchestrator,
+    *,
+    session_id: str,
+    import_artifact: dict[str, object],
+    handoff: dict[str, object],
+    runtime_session_report: dict[str, object],
+    handoff_bundle: dict[str, object] | None = None,
+) -> dict[str, Path]:
+    paths = {
+        "import_artifact_path": orchestrator.feedback_store.write_report(
+            f"openclaw_import_{session_id}.json",
+            import_artifact,
+        ),
+        "latest_import_artifact_path": orchestrator.feedback_store.write_report(
+            "latest_openclaw_import.json",
+            import_artifact,
+        ),
+        "runtime_session_report_path": orchestrator.feedback_store.write_report(
+            f"runtime_session_report_{session_id}.json",
+            runtime_session_report,
+        ),
+        "latest_runtime_session_report_path": orchestrator.feedback_store.write_report(
+            "latest_runtime_session_report.json",
+            runtime_session_report,
+        ),
+        "handoff_report_path": orchestrator.feedback_store.write_report(
+            f"openclaw_operator_handoff_{session_id}.json",
+            handoff,
+        ),
+        "latest_handoff_report_path": orchestrator.feedback_store.write_report(
+            "latest_openclaw_operator_handoff.json",
+            handoff,
+        ),
+    }
+    if handoff_bundle is not None:
+        paths["handoff_bundle_path"] = orchestrator.feedback_store.write_report(
+            f"openclaw_operator_handoff_bundle_{session_id}.json",
+            handoff_bundle,
+        )
+        paths["latest_handoff_bundle_path"] = orchestrator.feedback_store.write_report(
+            "latest_openclaw_operator_handoff_bundle.json",
+            handoff_bundle,
+        )
+    return paths
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     try:
@@ -171,6 +268,127 @@ def cmd_ingest(args: argparse.Namespace) -> int:
                 "projected_feedback_records": len(projected_records),
                 "events": [event.to_dict() for event in envelopes],
                 "projected_feedback": [record.to_dict() for record in projected_records],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_openclaw_import(args: argparse.Namespace) -> int:
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    try:
+        payload = _read_ingest_payload(args.file)
+        if _is_openclaw_handoff_bundle(payload):
+            handoff, runtime_session_report, envelopes, projected_records, envelope_import, projected_import = (
+                orchestrator.import_openclaw_handoff_bundle(payload)
+            )
+            session_id = str(handoff["session_id"])
+            reports_dir = orchestrator.feedback_store.reports_dir
+            restored_bundle = dict(payload)
+            restored_bundle["artifact_paths"] = {
+                "import_artifact_path": str(reports_dir / f"openclaw_import_{session_id}.json"),
+                "latest_import_artifact_path": str(reports_dir / "latest_openclaw_import.json"),
+                "runtime_session_report_path": str(reports_dir / f"runtime_session_report_{session_id}.json"),
+                "latest_runtime_session_report_path": str(reports_dir / "latest_runtime_session_report.json"),
+                "handoff_report_path": str(reports_dir / f"openclaw_operator_handoff_{session_id}.json"),
+                "latest_handoff_report_path": str(reports_dir / "latest_openclaw_operator_handoff.json"),
+                "handoff_bundle_path": str(reports_dir / f"openclaw_operator_handoff_bundle_{session_id}.json"),
+                "latest_handoff_bundle_path": str(reports_dir / "latest_openclaw_operator_handoff_bundle.json"),
+            }
+            import_artifact = {
+                "report_kind": "openclaw_operator_import",
+                "source_artifact": payload["source_artifact"],
+                "adapted_envelopes": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "handoff": handoff,
+                "runtime_session_report": runtime_session_report,
+                "import_mode": "handoff_bundle_replay",
+            }
+            persisted_paths = _persist_openclaw_import_chain(
+                orchestrator,
+                session_id=session_id,
+                import_artifact=import_artifact,
+                handoff=handoff,
+                runtime_session_report=runtime_session_report or {},
+                handoff_bundle=restored_bundle,
+            )
+            response = {
+                "status": "recorded",
+                "import_mode": "handoff_bundle_replay",
+                "session_id": session_id,
+                "ingested": envelope_import["recorded"],
+                "skipped_existing_envelopes": envelope_import["skipped"],
+                "projected_feedback_records": projected_import["recorded"],
+                "skipped_existing_projected_feedback": projected_import["skipped"],
+                "events": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "runtime_session_report": runtime_session_report,
+                "handoff": handoff,
+                "handoff_bundle": restored_bundle,
+            }
+        else:
+            artifact = parse_openclaw_operator_session_artifact(payload)
+            handoff, envelopes, projected_records = orchestrator.import_openclaw_operator_session(payload)
+            session_id = str(handoff["session_id"])
+            runtime_session_report = orchestrator.build_runtime_session_report_from_envelopes(
+                envelopes,
+                session_id=session_id,
+            )
+            import_artifact = {
+                "report_kind": "openclaw_operator_import",
+                "source_artifact": payload,
+                "adapted_envelopes": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "handoff": handoff,
+                "runtime_session_report": runtime_session_report,
+                "import_mode": "operator_session_artifact",
+            }
+            reports_dir = orchestrator.feedback_store.reports_dir
+            handoff_bundle = build_openclaw_operator_handoff_bundle_payload(
+                artifact,
+                handoff=handoff,
+                runtime_session_report=runtime_session_report,
+                envelopes=envelopes,
+                projected_records=projected_records,
+                artifact_paths={
+                    "import_artifact_path": str(reports_dir / f"openclaw_import_{session_id}.json"),
+                    "latest_import_artifact_path": str(reports_dir / "latest_openclaw_import.json"),
+                    "runtime_session_report_path": str(reports_dir / f"runtime_session_report_{session_id}.json"),
+                    "latest_runtime_session_report_path": str(reports_dir / "latest_runtime_session_report.json"),
+                    "handoff_report_path": str(reports_dir / f"openclaw_operator_handoff_{session_id}.json"),
+                    "latest_handoff_report_path": str(reports_dir / "latest_openclaw_operator_handoff.json"),
+                    "handoff_bundle_path": str(reports_dir / f"openclaw_operator_handoff_bundle_{session_id}.json"),
+                    "latest_handoff_bundle_path": str(reports_dir / "latest_openclaw_operator_handoff_bundle.json"),
+                },
+            )
+            persisted_paths = _persist_openclaw_import_chain(
+                orchestrator,
+                session_id=session_id,
+                import_artifact=import_artifact,
+                handoff=handoff,
+                runtime_session_report=runtime_session_report,
+                handoff_bundle=handoff_bundle,
+            )
+            response = {
+                "status": "recorded",
+                "import_mode": "operator_session_artifact",
+                "ingested": len(envelopes),
+                "projected_feedback_records": len(projected_records),
+                "session_id": session_id,
+                "events": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "runtime_session_report": runtime_session_report,
+                "handoff": handoff,
+                "handoff_bundle": handoff_bundle,
+            }
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"Invalid OpenClaw operator artifact: {error}") from error
+    print(
+        json.dumps(
+            {
+                **response,
+                **{name: str(path) for name, path in persisted_paths.items()},
             },
             indent=2,
         )
@@ -223,7 +441,16 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 def cmd_evolve(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     report, path = orchestrator.pipeline.run()
-    print(json.dumps({"report_path": str(path), **report.to_dict()}, indent=2))
+    workflow_state = build_workflow_state(
+        store=orchestrator.feedback_store,
+        report=report,
+        source_report=path,
+        config_path=args.config,
+        stage="evolved",
+        requested_proposals=[],
+    )
+    workflow_state_path = orchestrator.feedback_store.write_workflow_state(workflow_state)
+    print(json.dumps({"report_path": str(path), "workflow_state_path": str(workflow_state_path), **report.to_dict()}, indent=2))
     return 0
 
 
@@ -262,21 +489,125 @@ def cmd_governance(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    report, report_path = _load_evolution_report(orchestrator, args.report)
+    persisted_json = build_operator_review_payload(report, orchestrator.skill_bank)
+    persisted_report_path = orchestrator.feedback_store.write_report("latest_operator_review.json", persisted_json)
+    workflow_state = build_workflow_state(
+        store=orchestrator.feedback_store,
+        report=report,
+        source_report=report_path,
+        config_path=args.config,
+        stage="reviewed",
+        review_report=persisted_report_path,
+        requested_proposals=[],
+    )
+    workflow_state_path = orchestrator.feedback_store.write_workflow_state(workflow_state)
+    if args.format == "markdown":
+        rendered = render_operator_review_markdown(report, orchestrator.skill_bank)
+        if args.write_report:
+            output_path = orchestrator.feedback_store.write_text_report(
+                "latest_operator_review.md",
+                rendered,
+            )
+            print(rendered, end="")
+            print(f"\nReport path: {output_path}")
+            return 0
+        print(rendered, end="")
+        return 0
+    payload = persisted_json
+    payload["report_path"] = str(report_path)
+    payload["operator_review_report_path"] = str(persisted_report_path)
+    payload["workflow_state_path"] = str(workflow_state_path)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _resolve_promotion_request(
+    orchestrator: AtlasOrchestrator,
+    args: argparse.Namespace,
+) -> tuple[str | None, list[str]]:
+    if not args.resume_last:
+        return args.report, list(args.proposal_id)
+    if args.report or args.proposal_id:
+        raise SystemExit("--resume-last cannot be combined with --report or --proposal-id")
+    workflow_state = orchestrator.feedback_store.load_workflow_state()
+    if workflow_state is None:
+        raise SystemExit("No persisted workflow state is available for --resume-last")
+    report_path = workflow_state.get("source_report_path")
+    proposal_ids = list(workflow_state.get("selected_proposal_ids", []))
+    if not report_path:
+        raise SystemExit("Workflow state does not include a source report path")
+    if not proposal_ids:
+        raise SystemExit("Workflow state does not include a saved proposal selection")
+    return str(report_path), proposal_ids
+
+
 def cmd_promote(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
-    report, report_path = _load_evolution_report(orchestrator)
-    changed = orchestrator.pipeline.promote_approved(report)
-    governance_summary = build_governance_summary(report)
-    print(
-        json.dumps(
-            {
-                "source_report": str(report_path),
-                "promoted_files": [str(path) for path in changed],
-                "governance_summary": governance_summary,
-            },
-            indent=2,
-        )
+    report_arg, proposal_ids = _resolve_promotion_request(orchestrator, args)
+    report, report_path = _load_evolution_report(orchestrator, report_arg)
+    payload = orchestrator.pipeline.build_promotion_artifact(
+        report,
+        proposal_ids=proposal_ids,
+        source_report=report_path,
+        apply_changes=not args.dry_run,
     )
+    persisted_report_path = orchestrator.feedback_store.write_report("latest_promotion_artifact.json", payload)
+    workflow_state = build_workflow_state(
+        store=orchestrator.feedback_store,
+        report=report,
+        source_report=report_path,
+        config_path=args.config,
+        stage="promotion_dry_run" if args.dry_run else "promoted",
+        promotion_artifact=persisted_report_path,
+        requested_proposals=list(payload["requested_proposals"]),
+        selected_proposals=[item["proposal_id"] for item in payload["selected_proposals"]],
+        skipped_proposals=[item["proposal_id"] for item in payload["skipped_proposals"]],
+        applied_proposals=[
+            item["proposal_id"] for item in payload["selected_proposals"] if item.get("applied")
+        ],
+        dry_run=bool(payload["dry_run"]),
+    )
+    workflow_state_path = orchestrator.feedback_store.write_workflow_state(workflow_state)
+    if args.format == "markdown":
+        rendered = render_promotion_markdown(payload)
+        if args.write_report:
+            output_path = orchestrator.feedback_store.write_text_report(
+                "latest_promotion_artifact.md",
+                rendered,
+            )
+            print(rendered, end="")
+            print(f"\nReport path: {output_path}")
+            return 0
+        print(rendered, end="")
+        return 0
+    payload["promotion_artifact_path"] = str(persisted_report_path)
+    payload["workflow_state_path"] = str(workflow_state_path)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    try:
+        payload = build_resume_payload(orchestrator.feedback_store)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if args.format == "markdown":
+        rendered = render_resume_markdown(payload)
+        if args.write_report:
+            output_path = orchestrator.feedback_store.write_text_report("latest_workflow_resume.md", rendered)
+            print(rendered, end="")
+            print(f"\nReport path: {output_path}")
+            return 0
+        print(rendered, end="")
+        return 0
+    if args.write_report:
+        output_path = orchestrator.feedback_store.write_report("latest_workflow_resume.json", payload)
+        payload["workflow_resume_report_path"] = str(output_path)
+    print(json.dumps(payload, indent=2))
     return 0
 
 
@@ -300,11 +631,14 @@ def main(argv: list[str] | None = None) -> int:
         "route": cmd_route,
         "feedback": cmd_feedback,
         "ingest": cmd_ingest,
+        "openclaw-import": cmd_openclaw_import,
         "report": cmd_report,
         "inspect": cmd_inspect,
         "evolve": cmd_evolve,
         "governance": cmd_governance,
+        "review": cmd_review,
         "promote": cmd_promote,
+        "resume": cmd_resume,
         "serve": cmd_serve,
     }
     return command_map[args.command](args)

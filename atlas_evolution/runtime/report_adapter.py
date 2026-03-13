@@ -105,6 +105,10 @@ class RuntimeSessionReportAdapter:
             risk_notes.append(
                 f"Multiple session_feedback events were present; the latest outcome came from {latest_feedback.event.event_id}."
             )
+        operator_handoff = self._build_operator_handoff(
+            session_envelopes=session_envelopes,
+            latest_feedback=latest_feedback,
+        )
 
         return OperatorEvidenceReport(
             report_kind="runtime_session_evidence_bundle",
@@ -151,6 +155,7 @@ class RuntimeSessionReportAdapter:
                 "raw_envelopes": [item.to_dict() for item in session_envelopes],
                 "projected_feedback": [item.to_dict() for item in projected_feedback],
             },
+            operator_handoff=operator_handoff,
             metadata={
                 "report_min_evidence": self.evaluator.min_evidence,
                 "approval_threshold": self.evaluator.approval_threshold,
@@ -214,6 +219,19 @@ class RuntimeSessionReportAdapter:
             lines.extend(f"- {item}" for item in report.promotion_risk_notes)
         else:
             lines.append("- none")
+        lines.extend(["", "## Operator Handoff"])
+        if report.operator_handoff:
+            lines.append(f"- Session state: {report.operator_handoff.get('session_state', 'unknown')}")
+            last_checkpoint = report.operator_handoff.get("last_checkpoint")
+            if isinstance(last_checkpoint, dict):
+                lines.append(
+                    "- Last checkpoint: "
+                    f"{last_checkpoint.get('step', 'unknown')} [{last_checkpoint.get('status', 'unknown')}]"
+                )
+            lines.append(f"- Summary: {self._format_optional(report.operator_handoff.get('summary'))}")
+            lines.append(f"- Next action: {self._format_optional(report.operator_handoff.get('next_action'))}")
+        else:
+            lines.append("- none")
         lines.extend(
             [
                 "",
@@ -261,6 +279,48 @@ class RuntimeSessionReportAdapter:
                 continue
             notes.append(f"{signal_id}: {' '.join(evaluation.reasons)}")
         return notes
+
+    @staticmethod
+    def _build_operator_handoff(
+        session_envelopes: list[OpenClawAtlasEventEnvelope],
+        latest_feedback: OpenClawAtlasEventEnvelope | None,
+    ) -> dict[str, object]:
+        metadata: dict[str, object] = {}
+        for envelope in session_envelopes:
+            event_metadata = getattr(envelope.event, "metadata", {})
+            if not event_metadata:
+                continue
+            metadata.update(event_metadata)
+        last_checkpoint = metadata.get("last_checkpoint")
+        handoff = metadata.get("handoff") if isinstance(metadata.get("handoff"), dict) else {}
+        checkpoint_timeline = metadata.get("checkpoint_timeline")
+        checkpoint_count = len(checkpoint_timeline) if isinstance(checkpoint_timeline, list) else 0
+        payload: dict[str, object] = {
+            "session_state": "completed" if latest_feedback is not None else "awaiting_feedback",
+            "checkpoint_count": checkpoint_count,
+        }
+        if isinstance(last_checkpoint, dict):
+            payload["last_checkpoint"] = dict(last_checkpoint)
+        if isinstance(handoff, dict):
+            if handoff.get("summary"):
+                payload["summary"] = handoff["summary"]
+            if handoff.get("next_action"):
+                payload["next_action"] = handoff["next_action"]
+            if handoff.get("assignee"):
+                payload["assignee"] = handoff["assignee"]
+        if "summary" not in payload:
+            payload["summary"] = (
+                "Terminal feedback is present in the evidence bundle."
+                if latest_feedback is not None
+                else "Session evidence is incomplete and still awaiting terminal operator feedback."
+            )
+        if "next_action" not in payload:
+            payload["next_action"] = (
+                "Review the projected evidence and decide whether to evolve local skills."
+                if latest_feedback is not None
+                else "Continue the session or record direct feedback before evolving local skills."
+            )
+        return payload
 
     @staticmethod
     def _format_optional(value: object) -> str:

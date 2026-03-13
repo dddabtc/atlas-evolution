@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from atlas_evolution.config import load_config
+from atlas_evolution.evolution.governance import build_operator_review_payload
 from atlas_evolution.runtime.orchestrator import AtlasOrchestrator
 
 
@@ -109,6 +110,46 @@ class PipelineTests(unittest.TestCase):
                 report.metadata["governance_summary"]["ready_for_promotion"],
                 ["prompt-code_review"],
             )
+            self.assertEqual(
+                report.metadata["governance_summary"]["risky_ready"],
+                ["prompt-code_review"],
+            )
+            self.assertEqual(
+                report.metadata["governance_summary"]["rollback_sensitive"],
+                ["prompt-code_review"],
+            )
+
+            review_payload = build_operator_review_payload(report, orchestrator.skill_bank)
+            prompt_review = next(
+                item for item in review_payload["proposals"] if item["proposal_id"] == "prompt-code_review"
+            )
+            self.assertEqual(review_payload["review_queue"]["ready"], ["prompt-code_review"])
+            self.assertEqual(review_payload["review_queue"]["risky"], ["prompt-code_review"])
+            self.assertEqual(review_payload["review_queue"]["rollback_sensitive"], ["prompt-code_review"])
+            self.assertEqual(
+                review_payload["review_queue"]["operator_review_required"],
+                ["workflow-1", "capability-database-migrations"],
+            )
+            self.assertIn("ready", prompt_review["review_labels"])
+            self.assertIn("rollback_sensitive", prompt_review["review_labels"])
+            self.assertIn("atlas-evolution promote --proposal-id prompt-code_review", prompt_review["promotion_command"])
+            self.assertIn("---", prompt_review["change_preview"]["diff"])
+
+            dry_run = orchestrator.pipeline.build_promotion_artifact(
+                report,
+                proposal_ids=["prompt-code_review", "workflow-1", "missing-proposal"],
+                apply_changes=False,
+            )
+            self.assertTrue(dry_run["dry_run"])
+            self.assertEqual(dry_run["summary"]["selected_proposals"], 1)
+            self.assertEqual(dry_run["summary"]["applied_proposals"], 0)
+            self.assertEqual(len(dry_run["promoted_files"]), 0)
+            self.assertEqual(
+                {item["proposal_id"] for item in dry_run["skipped_proposals"]},
+                {"workflow-1", "missing-proposal"},
+            )
+            original = json.loads((skills_dir / "code_review.json").read_text(encoding="utf-8"))
+            self.assertNotIn("postgres", original["tags"])
 
             changed = orchestrator.pipeline.promote_approved(report)
             self.assertEqual(len(changed), 1)

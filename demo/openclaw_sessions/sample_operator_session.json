@@ -1,0 +1,48 @@
+{
+  "artifact_kind": "openclaw_operator_session",
+  "schema_version": "1.0",
+  "source": "openclaw-local",
+  "recorded_at": "2026-03-13T18:30:00+00:00",
+  "session": {
+    "session_id": "demo-openclaw-session-001",
+    "task": "review postgres migration rollback safety",
+    "started_at": "2026-03-13T18:20:00+00:00",
+    "operator": "local-demo",
+    "selected_skill_ids": ["code_review"]
+  },
+  "timeline": [
+    {
+      "checkpoint_id": "cp-prepare",
+      "occurred_at": "2026-03-13T18:21:00+00:00",
+      "step": "collect migration files",
+      "status": "completed",
+      "notes": "Reviewed the forward and rollback SQL."
+    },
+    {
+      "checkpoint_id": "cp-risk",
+      "occurred_at": "2026-03-13T18:24:00+00:00",
+      "step": "inspect rollback risk",
+      "status": "blocked",
+      "notes": "Lock-time estimate was missing from the runtime notes.",
+      "missing_capabilities": ["database migrations"]
+    }
+  ],
+  "outcome": {
+    "occurred_at": "2026-03-13T18:28:00+00:00",
+    "status": "failure",
+    "score": 0.2,
+    "comment": "Missed rollback coverage in the final recommendation.",
+    "missing_capabilities": ["database migrations"]
+  },
+  "handoff": {
+    "summary": "Paused after rollback risk inspection.",
+    "next_action": "Verify lock-time risk before promoting any migration guidance.",
+    "assignee": "db-oncall",
+    "notes": [
+      "Checkpoint cp-risk is the last operator-visible stopping point."
+    ]
+  },
+  "metadata": {
+    "trace_id": "demo-openclaw-trace-001"
+  }
+}
