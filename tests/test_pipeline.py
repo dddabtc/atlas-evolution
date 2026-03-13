@@ -84,10 +84,31 @@ class PipelineTests(unittest.TestCase):
 
             report, _ = orchestrator.pipeline.run()
             statuses = {item.proposal_id: item.status for item in report.evaluations}
+            evaluations = {item.proposal_id: item for item in report.evaluations}
+            proposals = {item.proposal_id: item for item in report.proposals}
 
             self.assertEqual(statuses["prompt-code_review"], "approved")
             self.assertEqual(statuses["workflow-1"], "manual_review")
             self.assertEqual(statuses["capability-database-migrations"], "manual_review")
+            self.assertEqual(evaluations["prompt-code_review"].readiness, "ready_for_promotion")
+            self.assertEqual(evaluations["prompt-code_review"].risk_level, "medium")
+            self.assertEqual(evaluations["workflow-1"].readiness, "operator_review_required")
+            self.assertEqual(
+                proposals["prompt-code_review"].gate_policy["promotion_mode"],
+                "auto_promote_after_gate",
+            )
+            self.assertEqual(
+                proposals["workflow-1"].gate_policy["promotion_mode"],
+                "manual_review_only",
+            )
+            self.assertEqual(
+                proposals["prompt-code_review"].rollback_context["target_path"],
+                str(skills_dir / "code_review.json"),
+            )
+            self.assertEqual(
+                report.metadata["governance_summary"]["ready_for_promotion"],
+                ["prompt-code_review"],
+            )
 
             changed = orchestrator.pipeline.promote_approved(report)
             self.assertEqual(len(changed), 1)

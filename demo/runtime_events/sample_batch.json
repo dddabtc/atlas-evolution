@@ -1,0 +1,30 @@
+{
+  "contract_name": "openclaw_atlas.runtime_event",
+  "contract_version": "1.0",
+  "source": "openclaw-local",
+  "metadata": {
+    "operator": "local-demo"
+  },
+  "events": [
+    {
+      "schema_version": "1.1",
+      "event_kind": "session_started",
+      "session_id": "demo-session-001",
+      "task": "review postgres migration rollback safety"
+    },
+    {
+      "schema_version": "1.1",
+      "event_kind": "session_feedback",
+      "session_id": "demo-session-001",
+      "task": "review postgres migration rollback safety",
+      "status": "failure",
+      "score": 0.2,
+      "comment": "missed rollback coverage",
+      "selected_skill_ids": ["code_review"],
+      "missing_capabilities": ["database migrations"],
+      "metadata": {
+        "trace_id": "demo-trace-001"
+      }
+    }
+  ]
+}
