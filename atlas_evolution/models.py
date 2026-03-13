@@ -51,6 +51,80 @@ class FeedbackRecord:
     def to_dict(self) -> dict[str, Any]:
         return compact_dict(asdict(self))
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "FeedbackRecord":
+        return cls(
+            session_id=payload["session_id"],
+            task=payload["task"],
+            status=payload["status"],
+            score=float(payload["score"]),
+            comment=payload.get("comment"),
+            steps=list(payload.get("steps", [])),
+            selected_skill_ids=list(payload.get("selected_skill_ids", [])),
+            missing_capabilities=list(payload.get("missing_capabilities", [])),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+
+@dataclass(slots=True)
+class ProjectedFeedbackRecord:
+    projection_id: str
+    source_contract: str
+    source_contract_version: str
+    source_envelope_id: str
+    source_event_id: str
+    source_event_kind: str
+    projected_at: str
+    feedback: FeedbackRecord
+    projection_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["feedback"] = self.feedback.to_dict()
+        return compact_dict(payload)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ProjectedFeedbackRecord":
+        return cls(
+            projection_id=payload["projection_id"],
+            source_contract=payload["source_contract"],
+            source_contract_version=payload["source_contract_version"],
+            source_envelope_id=payload["source_envelope_id"],
+            source_event_id=payload["source_event_id"],
+            source_event_kind=payload["source_event_kind"],
+            projected_at=payload["projected_at"],
+            feedback=FeedbackRecord.from_dict(dict(payload["feedback"])),
+            projection_metadata=dict(payload.get("projection_metadata", {})),
+        )
+
+    def to_feedback_record(self) -> FeedbackRecord:
+        metadata = dict(self.feedback.metadata)
+        metadata.update(
+            {
+                "feedback_origin": "runtime_projection",
+                "projection_id": self.projection_id,
+                "source_contract": self.source_contract,
+                "source_contract_version": self.source_contract_version,
+                "source_envelope_id": self.source_envelope_id,
+                "source_event_id": self.source_event_id,
+                "source_event_kind": self.source_event_kind,
+                "projected_at": self.projected_at,
+            }
+        )
+        if self.projection_metadata:
+            metadata["runtime_projection_metadata"] = dict(self.projection_metadata)
+        return FeedbackRecord(
+            session_id=self.feedback.session_id,
+            task=self.feedback.task,
+            status=self.feedback.status,
+            score=self.feedback.score,
+            comment=self.feedback.comment,
+            steps=list(self.feedback.steps),
+            selected_skill_ids=list(self.feedback.selected_skill_ids),
+            missing_capabilities=list(self.feedback.missing_capabilities),
+            metadata=metadata,
+        )
+
 
 @dataclass(slots=True)
 class EvolutionProposal:

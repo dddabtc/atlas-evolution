@@ -65,15 +65,17 @@ class RuntimeIngestTests(unittest.TestCase):
             payload_path.write_text(
                 json.dumps(
                     {
+                        "contract_name": "openclaw_atlas.runtime_event",
+                        "contract_version": "1.0",
+                        "source": "openclaw-local",
+                        "metadata": {"operator": "test-suite"},
                         "events": [
                             {
-                                "source": "openclaw-local",
                                 "event_kind": "session_started",
                                 "session_id": "sess-1",
                                 "task": "review postgres migration rollback safety",
                             },
                             {
-                                "source": "openclaw-local",
                                 "event_kind": "session_feedback",
                                 "session_id": "sess-1",
                                 "task": "review postgres migration rollback safety",
@@ -96,12 +98,78 @@ class RuntimeIngestTests(unittest.TestCase):
                 result = main(["ingest", "--config", str(config_path), "--file", str(payload_path)])
 
             self.assertEqual(result, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["projected_feedback_records"], 1)
             orchestrator = AtlasOrchestrator(load_config(config_path))
-            events = orchestrator.feedback_store.iter_events()
-            self.assertEqual(len([item for item in events if item["event_type"] == "runtime_session_event"]), 2)
+            raw_envelopes = orchestrator.feedback_store.iter_runtime_event_envelopes()
+            self.assertEqual(len(raw_envelopes), 2)
+            self.assertEqual(raw_envelopes[0].metadata["operator"], "test-suite")
+            projected = orchestrator.feedback_store.iter_projected_feedback_records()
+            self.assertEqual(len(projected), 1)
             feedback = orchestrator.feedback_store.load_feedback()
             self.assertEqual(len(feedback), 1)
-            self.assertEqual(feedback[0].metadata["runtime_source"], "openclaw-local")
+            self.assertEqual(feedback[0].metadata["feedback_origin"], "runtime_projection")
+            self.assertEqual(
+                feedback[0].metadata["runtime_projection_metadata"]["runtime_source"],
+                "openclaw-local",
+            )
+
+    def test_cli_inspect_reports_raw_to_projected_audit_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            orchestrator, config_path = build_orchestrator(root)
+
+            orchestrator.ingest_runtime_events(
+                {
+                    "contract_name": "openclaw_atlas.runtime_event",
+                    "contract_version": "1.0",
+                    "source": "openclaw-local",
+                    "metadata": {"operator": "local-audit"},
+                    "events": [
+                        {
+                            "event_kind": "session_started",
+                            "session_id": "sess-audit",
+                            "task": "review postgres migration rollback safety",
+                        },
+                        {
+                            "event_kind": "session_feedback",
+                            "session_id": "sess-audit",
+                            "task": "review postgres migration rollback safety",
+                            "status": "failure",
+                            "score": 0.2,
+                            "comment": "missed rollback coverage",
+                            "selected_skill_ids": ["code_review"],
+                        },
+                    ],
+                }
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "inspect",
+                        "--config",
+                        str(config_path),
+                        "--session-id",
+                        "sess-audit",
+                        "--limit",
+                        "10",
+                        "--write-report",
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            report = json.loads(stdout.getvalue())
+            self.assertEqual(report["summary"]["raw_envelopes"], 2)
+            self.assertEqual(report["summary"]["projected_feedback_records"], 1)
+            self.assertEqual(report["audit_records"][0]["projection_status"], "raw_only")
+            self.assertEqual(report["audit_records"][1]["projection_status"], "projected")
+            self.assertEqual(
+                report["audit_records"][1]["projected_feedback"]["source_envelope_id"],
+                report["audit_records"][1]["raw_envelope"]["envelope_id"],
+            )
+            self.assertTrue(Path(report["report_path"]).exists())
 
     def test_pipeline_consumes_ingested_runtime_feedback_and_existing_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,6 +245,7 @@ class RuntimeIngestTests(unittest.TestCase):
             self.assertEqual(status_codes, [200])
             body = json.loads(handler.wfile.getvalue().decode("utf-8"))
             self.assertEqual(body["ingested"], 1)
+            self.assertEqual(body["projected_feedback_records"], 1)
             self.assertEqual(len(orchestrator.feedback_store.load_feedback()), 1)
 
     def test_runtime_event_schema_rejects_out_of_range_score(self) -> None:

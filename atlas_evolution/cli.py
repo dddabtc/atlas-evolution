@@ -50,6 +50,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read JSON from a file. If omitted, JSON is read from stdin.",
     )
 
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="Inspect raw runtime event envelopes and projected feedback records.",
+    )
+    inspect_parser.add_argument("--config", default="demo/atlas.toml")
+    inspect_parser.add_argument("--session-id")
+    inspect_parser.add_argument("--limit", type=int, default=20)
+    inspect_parser.add_argument("--write-report", action="store_true")
+
     evolve_parser = subparsers.add_parser("evolve", help="Generate and gate evolution proposals.")
     evolve_parser.add_argument("--config", default="demo/atlas.toml")
 
@@ -121,19 +130,33 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     try:
         payload = _read_ingest_payload(args.file)
-        events = orchestrator.ingest_runtime_events(payload)
+        envelopes, projected_records = orchestrator.ingest_runtime_events(payload)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(f"Invalid ingest payload: {error}") from error
     print(
         json.dumps(
             {
                 "status": "recorded",
-                "ingested": len(events),
-                "events": [event.to_dict() for event in events],
+                "ingested": len(envelopes),
+                "projected_feedback_records": len(projected_records),
+                "events": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
             },
             indent=2,
         )
     )
+    return 0
+
+
+def cmd_inspect(args: argparse.Namespace) -> int:
+    if args.limit <= 0:
+        raise SystemExit("--limit must be greater than zero")
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    payload = orchestrator.build_runtime_ingest_report(session_id=args.session_id, limit=args.limit)
+    if args.write_report:
+        report_path = orchestrator.feedback_store.write_report("latest_runtime_ingest_audit.json", payload)
+        payload = {"report_path": str(report_path), **payload}
+    print(json.dumps(payload, indent=2))
     return 0
 
 
@@ -176,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         "route": cmd_route,
         "feedback": cmd_feedback,
         "ingest": cmd_ingest,
+        "inspect": cmd_inspect,
         "evolve": cmd_evolve,
         "promote": cmd_promote,
         "serve": cmd_serve,

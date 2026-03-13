@@ -52,7 +52,8 @@ class PromptEvolver:
         for skill_id, counts in failure_terms.items():
             if evidence_counts[skill_id] < min_evidence or not counts:
                 continue
-            top_terms = [term for term, _ in counts.most_common(3)]
+            ranked_terms = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            top_terms = [term for term, _count in ranked_terms[:3]]
             if not top_terms:
                 continue
             confidence = min(0.95, 0.45 + 0.1 * evidence_counts[skill_id] + 0.05 * len(top_terms))

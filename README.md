@@ -8,7 +8,7 @@ It does **not** claim autonomous self-improvement is solved. This repo ships a p
 
 - local config and CLI
 - skill loading and retrieval
-- append-only feedback and runtime-event logging
+- append-only direct feedback logging plus raw runtime-envelope and projected-feedback ledgers
 - post-session evolution proposal generation
 - an evaluation gate before promotion
 - a minimal HTTP proxy/orchestration surface
@@ -22,8 +22,8 @@ Atlas Evolution sits beside an agent runtime instead of replacing it.
 1. A task comes in through the CLI or local proxy.
 2. The orchestrator retrieves the most relevant local skills.
 3. Atlas Evolution returns a prompt bundle for the downstream agent and logs the session start.
-4. After the run, the operator can either record feedback directly or ingest conservative runtime session events from a local file/stdin or local HTTP endpoint.
-5. The evolution pipeline analyzes the append-only ledger, projects feedback-shaped runtime events, and produces reviewable proposals.
+4. After the run, the operator can either record feedback directly or ingest conservative OpenClaw/Atlas runtime event envelopes from a local file/stdin or local HTTP endpoint.
+5. Atlas stores the raw inbound envelopes, projects only supported feedback events into a separate evolution-feedback ledger, and lets the operator inspect that audit path.
 6. The evaluation gate approves only supported prompt-metadata changes; scaffolded proposal types stay manual-review only.
 
 That makes v1.1 a **governed evolution pipeline**, not an autonomous learning system.
@@ -35,9 +35,10 @@ atlas_evolution/
   cli.py                 # Local CLI entrypoint
   config.py              # TOML config loader
   models.py              # Shared dataclasses
-  runtime_events.py      # Typed runtime ingest schema + validation
+  openclaw_contract.py   # Formal OpenClaw/Atlas contract + typed models
+  runtime_events.py      # Compatibility wrapper for runtime-event parsing
   skill_bank.py          # Skill loading + keyword retrieval
-  feedback_store.py      # Append-only JSONL event store
+  feedback_store.py      # Append-only JSONL ledgers + audit report builder
   evolution/
     prompt_evolver.py    # Heuristic prompt/skill metadata proposals
     workflow_discoverer.py
@@ -63,8 +64,9 @@ Implemented in v1.1:
 - skill manifests from JSON
 - deterministic local retrieval
 - append-only event and feedback storage
-- typed runtime session-event ingest schema
+- formal OpenClaw/Atlas event contract with typed envelope and event models
 - CLI ingest from file or stdin
+- operator-visible inspect command over raw-to-projected ingest history
 - local HTTP ingest endpoint for runtime events
 - heuristic prompt-update proposals
 - heuristic workflow and capability proposals
@@ -139,6 +141,14 @@ Ingest runtime session events from stdin:
 cat demo/runtime_events/sample_batch.json | python3 -m atlas_evolution.cli ingest --config demo/atlas.toml
 ```
 
+Inspect the raw envelope and projected feedback audit chain:
+
+```bash
+python3 -m atlas_evolution.cli inspect \
+  --config demo/atlas.toml \
+  --write-report
+```
+
 Generate proposals and gate them:
 
 ```bash
@@ -207,19 +217,26 @@ curl -X POST http://127.0.0.1:8765/v1/ingest \
   }'
 ```
 
-## Runtime Event Schema
+## OpenClaw/Atlas Contract
 
-The runtime ingest path accepts a single JSON object, a JSON array, or an envelope shaped like `{"events":[...]}`.
+The runtime ingest path now has a first-class local contract instead of only a generic event shape.
 
-Each event uses a conservative `v1.1` schema:
+- contract name: `openclaw_atlas.runtime_event`
+- contract version: `1.0`
+- supported event kinds: `session_started`, `session_feedback`
+- event schema version: `1.1`
+- accepted payloads: one envelope, a list of envelopes, or a batch object with `events`
 
-- required fields for all events: `schema_version` (defaults to `1.1`), `source`, `event_kind`, `session_id`, `task`
-- `event_kind` is limited to `session_started` or `session_feedback`
-- `session_feedback` also requires `status` and `score`
-- `status` is limited to `success`, `failure`, `partial`, `cancelled`, or `unknown`
-- optional fields: `event_id`, `occurred_at`, `comment`, `steps`, `selected_skill_ids`, `missing_capabilities`, `metadata`
+Each ingested item is handled in two stages:
 
-Ingested events are appended to the same local JSONL ledger as routed sessions and direct feedback. Only `session_feedback` events are projected into the evolution pipeline, so operator review remains in control.
+- Atlas appends the raw event envelope to `runtime_event_envelopes.jsonl`
+- Atlas projects only `session_feedback` events into `projected_feedback.jsonl`
+
+The evolution pipeline consumes direct operator feedback plus projected feedback records. It does not consume raw envelopes directly.
+
+The compatibility parser still accepts the older flat runtime-event shape so existing local demo flows do not break.
+
+Full contract details: `docs/openclaw_atlas_contract.md`
 
 ## Evaluation Gate
 
@@ -241,7 +258,7 @@ Current coverage focuses on:
 
 - config path resolution
 - skill retrieval relevance
-- CLI and HTTP runtime ingest behavior
+- CLI and HTTP runtime ingest behavior, including raw-to-projected audit inspection
 - proposal generation, mixed feedback/runtime-event pipeline behavior, and approved promotion behavior
 
 ## Status

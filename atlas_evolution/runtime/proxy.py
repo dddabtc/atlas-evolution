@@ -83,7 +83,7 @@ def make_handler(orchestrator: AtlasOrchestrator) -> type[BaseHTTPRequestHandler
             if self.path == "/v1/ingest":
                 try:
                     body = _parse_body(self)
-                    events = orchestrator.ingest_runtime_events(body)
+                    envelopes, projected_records = orchestrator.ingest_runtime_events(body)
                 except ValueError as error:
                     _json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(error)})
                     return
@@ -92,8 +92,10 @@ def make_handler(orchestrator: AtlasOrchestrator) -> type[BaseHTTPRequestHandler
                     HTTPStatus.OK,
                     {
                         "status": "recorded",
-                        "ingested": len(events),
-                        "events": [event.to_dict() for event in events],
+                        "ingested": len(envelopes),
+                        "projected_feedback_records": len(projected_records),
+                        "events": [event.to_dict() for event in envelopes],
+                        "projected_feedback": [record.to_dict() for record in projected_records],
                     },
                 )
                 return
