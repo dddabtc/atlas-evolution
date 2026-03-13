@@ -120,6 +120,8 @@ Atlas writes three persistent ledgers plus optional operator report artifacts in
 - `runtime_event_envelopes.jsonl`: raw OpenClaw/Atlas event envelopes
 - `projected_feedback.jsonl`: projected evolution feedback records
 - `reports/runtime_session_report_<session-id>.json|md`: operator evidence bundle with raw outcome, selected skills, missing capabilities, projected evolution signals, and promotion-risk notes
+- `reports/latest_evolution_report.json`: latest local evolution proposals plus gate policy, readiness, risk, and rollback metadata
+- `reports/latest_governance_report.json|md`: operator-facing promotion-readiness and rollback inspection report
 
 Operators can inspect the chain with:
 
@@ -146,3 +148,19 @@ The report adapter does not call an LLM. It deterministically summarizes:
 - missing capabilities
 - projected evolution signals from the local heuristic pipeline
 - promotion-risk notes derived from the offline evaluation gate
+
+Operators can inspect the evolution control plane directly with:
+
+```bash
+python3 -m atlas_evolution.cli governance \
+  --config demo/atlas.toml \
+  --format markdown \
+  --write-report
+```
+
+That surface joins each proposal with:
+
+- explicit gate-policy metadata
+- promotion readiness (`ready_for_promotion`, `operator_review_required`, or `blocked`)
+- deterministic risk level and operator action hints
+- local rollback context for approved prompt metadata changes

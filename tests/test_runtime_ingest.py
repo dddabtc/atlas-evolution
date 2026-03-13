@@ -253,7 +253,21 @@ class RuntimeIngestTests(unittest.TestCase):
             signal_types = {item["proposal_type"] for item in report["projected_evolution_signals"]}
             self.assertIn("prompt_update", signal_types)
             self.assertIn("capability_gap", signal_types)
-            self.assertTrue(any("manual review" in note.lower() for note in report["promotion_risk_notes"]))
+            prompt_signal = next(
+                item for item in report["projected_evolution_signals"] if item["proposal_type"] == "prompt_update"
+            )
+            self.assertEqual(prompt_signal["promotion_readiness"], "blocked")
+            self.assertEqual(prompt_signal["gate_policy"]["promotion_mode"], "auto_promote_after_gate")
+            self.assertIn("target_path", prompt_signal["rollback_context"])
+            self.assertEqual(
+                report["metadata"]["governance_summary"]["blocked"],
+                ["prompt-code_review"],
+            )
+            self.assertEqual(
+                report["metadata"]["governance_summary"]["operator_review_queue"],
+                ["capability-database-migrations"],
+            )
+            self.assertTrue(any("operator review" in note.lower() for note in report["promotion_risk_notes"]))
             self.assertTrue(Path(report["report_path"]).exists())
 
     def test_cli_report_emits_markdown_evidence_bundle(self) -> None:
@@ -320,6 +334,7 @@ class RuntimeIngestTests(unittest.TestCase):
             self.assertIn("## Raw Session Outcome", output)
             self.assertIn("- Status: failure", output)
             self.assertIn("## Projected Evolution Signals", output)
+            self.assertIn("## Promotion Readiness", output)
             self.assertIn("capability-database-migrations", output)
             report_path_line = [line for line in output.splitlines() if line.startswith("Report path: ")]
             self.assertEqual(len(report_path_line), 1)
@@ -367,6 +382,42 @@ class RuntimeIngestTests(unittest.TestCase):
             self.assertEqual(len(changed), 1)
             updated = json.loads((root / "skills" / "code_review.json").read_text(encoding="utf-8"))
             self.assertIn("postgres", updated["tags"])
+
+    def test_cli_governance_reports_readiness_and_rollback_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            orchestrator, config_path = build_orchestrator(root)
+
+            route_one = orchestrator.route_task("review postgres migration rollback safety")
+            route_two = orchestrator.route_task("review postgres indexing migration")
+            selected = [item["skill"]["id"] for item in route_one["selected_skills"]]
+            for route, comment in (
+                (route_one, "Need deeper postgres migration coverage"),
+                (route_two, "postgres review missed migration rollback issues"),
+            ):
+                orchestrator.record_feedback(
+                    session_id=route["session_id"],
+                    task=route["task"],
+                    status="failure",
+                    score=0.2,
+                    comment=comment,
+                    selected_skill_ids=selected,
+                    missing_capabilities=["database migrations"],
+                )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(["governance", "--config", str(config_path), "--write-report"])
+
+            self.assertEqual(result, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["summary"]["ready_for_promotion"], ["prompt-code_review"])
+            self.assertEqual(payload["summary"]["operator_review_queue"], ["capability-database-migrations"])
+            prompt = next(item for item in payload["proposals"] if item["proposal_id"] == "prompt-code_review")
+            self.assertEqual(prompt["readiness"], "ready_for_promotion")
+            self.assertEqual(prompt["rollback_context"]["strategy"], "restore_skill_file")
+            self.assertTrue(prompt["rollback_context"]["target_path"].endswith("skills/code_review.json"))
+            self.assertTrue(Path(payload["governance_report_path"]).exists())
 
     def test_proxy_ingest_endpoint_records_runtime_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

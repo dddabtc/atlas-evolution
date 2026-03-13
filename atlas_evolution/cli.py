@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 import sys
 from atlas_evolution.config import load_config, write_default_config
+from atlas_evolution.evolution.governance import (
+    build_governance_payload,
+    build_governance_summary,
+    render_governance_markdown,
+)
 from atlas_evolution.models import EvolutionReport
 from atlas_evolution.runtime.orchestrator import AtlasOrchestrator
 from atlas_evolution.runtime.proxy import run_server
@@ -71,6 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     evolve_parser = subparsers.add_parser("evolve", help="Generate and gate evolution proposals.")
     evolve_parser.add_argument("--config", default="demo/atlas.toml")
+
+    governance_parser = subparsers.add_parser(
+        "governance",
+        help="Inspect promotion readiness, risk, and rollback context for evolution proposals.",
+    )
+    governance_parser.add_argument("--config", default="demo/atlas.toml")
+    governance_parser.add_argument("--report")
+    governance_parser.add_argument("--format", choices=["json", "markdown"], default="json")
+    governance_parser.add_argument("--write-report", action="store_true")
 
     promote_parser = subparsers.add_parser(
         "promote",
@@ -213,15 +227,56 @@ def cmd_evolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_evolution_report(
+    orchestrator: AtlasOrchestrator,
+    report_path: str | None = None,
+) -> tuple[EvolutionReport, Path]:
+    path = Path(report_path) if report_path else orchestrator.feedback_store.reports_dir / "latest_evolution_report.json"
+    if path.exists():
+        return EvolutionReport.from_dict(json.loads(path.read_text(encoding="utf-8"))), path
+    report, generated_path = orchestrator.pipeline.run()
+    return report, generated_path
+
+
+def cmd_governance(args: argparse.Namespace) -> int:
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    report, report_path = _load_evolution_report(orchestrator, args.report)
+    if args.format == "markdown":
+        rendered = render_governance_markdown(report)
+        if args.write_report:
+            output_path = orchestrator.feedback_store.write_text_report(
+                "latest_governance_report.md",
+                rendered,
+            )
+            print(rendered, end="")
+            print(f"\nReport path: {output_path}")
+            return 0
+        print(rendered, end="")
+        return 0
+    payload = build_governance_payload(report)
+    payload["report_path"] = str(report_path)
+    if args.write_report:
+        output_path = orchestrator.feedback_store.write_report("latest_governance_report.json", payload)
+        payload["governance_report_path"] = str(output_path)
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
 def cmd_promote(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
-    report_path = orchestrator.feedback_store.reports_dir / "latest_evolution_report.json"
-    if report_path.exists():
-        report = EvolutionReport.from_dict(json.loads(report_path.read_text(encoding="utf-8")))
-    else:
-        report, _ = orchestrator.pipeline.run()
+    report, report_path = _load_evolution_report(orchestrator)
     changed = orchestrator.pipeline.promote_approved(report)
-    print(json.dumps({"promoted_files": [str(path) for path in changed]}, indent=2))
+    governance_summary = build_governance_summary(report)
+    print(
+        json.dumps(
+            {
+                "source_report": str(report_path),
+                "promoted_files": [str(path) for path in changed],
+                "governance_summary": governance_summary,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -248,6 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         "report": cmd_report,
         "inspect": cmd_inspect,
         "evolve": cmd_evolve,
+        "governance": cmd_governance,
         "promote": cmd_promote,
         "serve": cmd_serve,
     }

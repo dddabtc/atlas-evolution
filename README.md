@@ -44,6 +44,7 @@ atlas_evolution/
     workflow_discoverer.py
     capability_assessor.py
     evaluator.py         # Offline evaluation gate
+    governance.py        # Governance metadata + readiness/rollback reporting
     pipeline.py          # Proposal generation + promotion logic
   runtime/
     orchestrator.py      # Ties config, retrieval, feedback, evolution together
@@ -73,7 +74,9 @@ Implemented in v1.1:
 - heuristic prompt-update proposals
 - heuristic workflow and capability proposals
 - offline evaluation gate
+- explicit gate policy, readiness, risk, and rollback metadata on proposals
 - explicit promotion step for approved prompt updates
+- operator-facing governance inspection command
 - local HTTP endpoints for route, feedback, and ingest
 
 Scaffolded in v1.1:
@@ -167,6 +170,15 @@ Generate proposals and gate them:
 python3 -m atlas_evolution.cli evolve --config demo/atlas.toml
 ```
 
+Inspect promotion readiness and rollback context:
+
+```bash
+python3 -m atlas_evolution.cli governance \
+  --config demo/atlas.toml \
+  --format markdown \
+  --write-report
+```
+
 Apply only approved prompt updates:
 
 ```bash
@@ -257,6 +269,8 @@ The gate is intentionally conservative:
 
 - prompt updates need enough evidence and confidence to be approved
 - scaffolded workflow and capability proposals are always marked `manual_review`
+- each proposal now carries explicit gate-policy metadata and deterministic rollback context
+- each evaluation result now carries promotion readiness, risk level, and operator actions
 - promotion applies only proposals that passed the gate
 
 This prevents v1.1 from blindly rewriting skills based on weak evidence.
@@ -272,7 +286,7 @@ Current coverage focuses on:
 - config path resolution
 - skill retrieval relevance
 - CLI and HTTP runtime ingest behavior, including raw-to-projected audit inspection
-- proposal generation, mixed feedback/runtime-event pipeline behavior, and approved promotion behavior
+- proposal generation, governance metadata/readiness reporting, mixed feedback/runtime-event pipeline behavior, and approved promotion behavior
 
 ## Status
 

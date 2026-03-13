@@ -4,9 +4,10 @@ from collections.abc import Iterable
 
 from atlas_evolution.evolution.capability_assessor import CapabilityAssessor
 from atlas_evolution.evolution.evaluator import EvaluationGate
+from atlas_evolution.evolution.governance import annotate_proposals, build_governance_summary
 from atlas_evolution.evolution.prompt_evolver import PromptEvolver
 from atlas_evolution.evolution.workflow_discoverer import WorkflowDiscoverer
-from atlas_evolution.models import OperatorEvidenceReport, OperatorEvolutionSignal
+from atlas_evolution.models import EvolutionReport, OperatorEvidenceReport, OperatorEvolutionSignal
 from atlas_evolution.openclaw_contract import (
     OpenClawAtlasEventEnvelope,
     OpenClawAtlasSessionFeedback,
@@ -72,8 +73,12 @@ class RuntimeSessionReportAdapter:
         )
         proposals.extend(self.workflow_discoverer.propose(feedback=feedback_records, min_evidence=1))
         proposals.extend(self.capability_assessor.propose(feedback=feedback_records, min_evidence=1))
+        annotate_proposals(proposals, self.skill_bank)
         evaluations = self.evaluator.evaluate(proposals)
         evaluations_by_id = {item.proposal_id: item for item in evaluations}
+        governance_summary = build_governance_summary(
+            EvolutionReport(proposals=proposals, evaluations=evaluations)
+        )
 
         selected_skill_ids = self._collect_unique_lists(item.event.selected_skill_ids for item in session_envelopes)
         missing_capabilities = self._collect_unique_lists(item.event.missing_capabilities for item in session_envelopes)
@@ -129,6 +134,11 @@ class RuntimeSessionReportAdapter:
                     confidence=proposal.confidence,
                     evaluation_status=evaluations_by_id[proposal.proposal_id].status,
                     evaluation_reasons=list(evaluations_by_id[proposal.proposal_id].reasons),
+                    gate_policy=dict(proposal.gate_policy),
+                    promotion_readiness=evaluations_by_id[proposal.proposal_id].readiness,
+                    risk_level=evaluations_by_id[proposal.proposal_id].risk_level,
+                    operator_actions=list(evaluations_by_id[proposal.proposal_id].operator_actions),
+                    rollback_context=dict(evaluations_by_id[proposal.proposal_id].rollback_context),
                     target_id=proposal.target_id,
                     changes=dict(proposal.changes),
                 )
@@ -144,6 +154,7 @@ class RuntimeSessionReportAdapter:
             metadata={
                 "report_min_evidence": self.evaluator.min_evidence,
                 "approval_threshold": self.evaluator.approval_threshold,
+                "governance_summary": governance_summary,
             },
         )
 
@@ -180,7 +191,22 @@ class RuntimeSessionReportAdapter:
         lines.extend(["", "## Projected Evolution Signals"])
         if report.projected_evolution_signals:
             for signal in report.projected_evolution_signals:
-                lines.append(f"- {signal.proposal_id} [{signal.evaluation_status}] {signal.summary}")
+                lines.append(
+                    f"- {signal.proposal_id} [{signal.evaluation_status}] "
+                    f"readiness={signal.promotion_readiness} risk={signal.risk_level} {signal.summary}"
+                )
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Promotion Readiness"])
+        summary = report.metadata.get("governance_summary", {})
+        if summary:
+            lines.extend(
+                [
+                    f"- Ready for promotion: {len(summary.get('ready_for_promotion', []))}",
+                    f"- Operator review queue: {len(summary.get('operator_review_queue', []))}",
+                    f"- Blocked: {len(summary.get('blocked', []))}",
+                ]
+            )
         else:
             lines.append("- none")
         lines.extend(["", "## Promotion Risk Notes"])

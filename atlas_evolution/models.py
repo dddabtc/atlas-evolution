@@ -137,6 +137,8 @@ class EvolutionProposal:
     evidence_count: int = 0
     confidence: float = 0.0
     changes: dict[str, Any] = field(default_factory=dict)
+    gate_policy: dict[str, Any] = field(default_factory=dict)
+    rollback_context: dict[str, Any] = field(default_factory=dict)
     scaffolded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -148,6 +150,10 @@ class EvaluationResult:
     proposal_id: str
     status: str
     reasons: list[str] = field(default_factory=list)
+    readiness: str = "blocked"
+    risk_level: str = "high"
+    operator_actions: list[str] = field(default_factory=list)
+    rollback_context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -179,6 +185,8 @@ class EvolutionReport:
                 evidence_count=int(item.get("evidence_count", 0)),
                 confidence=float(item.get("confidence", 0.0)),
                 changes=dict(item.get("changes", {})),
+                gate_policy=dict(item.get("gate_policy", {})),
+                rollback_context=dict(item.get("rollback_context", {})),
                 scaffolded=bool(item.get("scaffolded", False)),
             )
             for item in payload.get("proposals", [])
@@ -188,6 +196,10 @@ class EvolutionReport:
                 proposal_id=item["proposal_id"],
                 status=item["status"],
                 reasons=list(item.get("reasons", [])),
+                readiness=item.get("readiness", "blocked"),
+                risk_level=item.get("risk_level", "high"),
+                operator_actions=list(item.get("operator_actions", [])),
+                rollback_context=dict(item.get("rollback_context", {})),
             )
             for item in payload.get("evaluations", [])
         ]
@@ -205,6 +217,11 @@ class OperatorEvolutionSignal:
     confidence: float
     evaluation_status: str
     evaluation_reasons: list[str] = field(default_factory=list)
+    gate_policy: dict[str, Any] = field(default_factory=dict)
+    promotion_readiness: str = "blocked"
+    risk_level: str = "high"
+    operator_actions: list[str] = field(default_factory=list)
+    rollback_context: dict[str, Any] = field(default_factory=dict)
     target_id: str | None = None
     changes: dict[str, Any] = field(default_factory=dict)
 

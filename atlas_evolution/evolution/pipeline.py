@@ -9,6 +9,7 @@ from atlas_evolution.skill_bank import SkillBank
 
 from .capability_assessor import CapabilityAssessor
 from .evaluator import EvaluationGate
+from .governance import annotate_proposals, build_governance_summary
 from .prompt_evolver import PromptEvolver
 from .workflow_discoverer import WorkflowDiscoverer
 
@@ -34,7 +35,11 @@ class EvolutionPipeline:
         )
         proposals.extend(self.workflow_discoverer.propose(feedback=feedback, min_evidence=self.evaluator.min_evidence))
         proposals.extend(self.capability_assessor.propose(feedback=feedback, min_evidence=self.evaluator.min_evidence))
+        annotate_proposals(proposals, self.skill_bank)
         evaluations = self.evaluator.evaluate(proposals)
+        governance_summary = build_governance_summary(
+            EvolutionReport(proposals=proposals, evaluations=evaluations)
+        )
         report = EvolutionReport(
             proposals=proposals,
             evaluations=evaluations,
@@ -42,6 +47,7 @@ class EvolutionPipeline:
                 "generated_at": datetime.now(tz=UTC).isoformat(),
                 "skill_count": len(self.skill_bank.skills),
                 "feedback_count": len(feedback),
+                "governance_summary": governance_summary,
             },
         )
         path = self.store.write_report("latest_evolution_report.json", report.to_dict())
