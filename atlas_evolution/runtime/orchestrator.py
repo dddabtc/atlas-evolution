@@ -10,6 +10,7 @@ from atlas_evolution.openclaw_contract import OpenClawAtlasEventEnvelope, parse_
 from atlas_evolution.runtime.openclaw_adapter import (
     adapt_openclaw_operator_session_artifact,
     build_openclaw_operator_handoff_payload,
+    parse_openclaw_operator_handoff_bundle,
 )
 from atlas_evolution.runtime.report_adapter import RuntimeSessionReportAdapter
 from atlas_evolution.skill_bank import SkillBank
@@ -112,6 +113,50 @@ class AtlasOrchestrator:
             projected_records=projected_records,
         )
         return handoff, envelopes, projected_records
+
+    def build_runtime_session_report_from_envelopes(
+        self,
+        envelopes: list[OpenClawAtlasEventEnvelope],
+        session_id: str | None = None,
+    ) -> dict[str, object]:
+        return self.report_adapter.build_report(envelopes, session_id=session_id).to_dict()
+
+    def import_openclaw_handoff_bundle(
+        self,
+        payload: object,
+    ) -> tuple[
+        dict[str, object],
+        dict[str, object] | None,
+        list[OpenClawAtlasEventEnvelope],
+        list[ProjectedFeedbackRecord],
+        dict[str, int],
+        dict[str, int],
+    ]:
+        bundle = parse_openclaw_operator_handoff_bundle(payload)
+        envelopes = list(bundle["adapted_envelopes"])
+        projected_records = list(bundle["projected_feedback"])
+        known_envelope_ids = {item.envelope_id for item in self.feedback_store.iter_runtime_event_envelopes()}
+        missing_envelope_ids = [
+            item.source_envelope_id
+            for item in projected_records
+            if item.source_envelope_id not in known_envelope_ids
+            and item.source_envelope_id not in {envelope.envelope_id for envelope in envelopes}
+        ]
+        if missing_envelope_ids:
+            raise ValueError(
+                "Handoff bundle projected feedback references unknown envelopes: "
+                + ", ".join(sorted(set(missing_envelope_ids)))
+            )
+        envelope_import = self.feedback_store.import_runtime_event_envelopes(envelopes)
+        projected_import = self.feedback_store.import_projected_feedback_records(projected_records)
+        return (
+            dict(bundle["handoff"]),
+            bundle["runtime_session_report"],
+            envelopes,
+            projected_records,
+            envelope_import,
+            projected_import,
+        )
 
     def build_runtime_ingest_report(self, session_id: str | None = None, limit: int | None = 20) -> dict[str, object]:
         return self.feedback_store.build_runtime_ingest_report(session_id=session_id, limit=limit)

@@ -3,6 +3,7 @@
 Atlas Evolution keeps proposal review and promotion local, deterministic, and operator-visible.
 The latest workflow checkpoint is also persisted locally so review/promote work can be resumed after a machine restart.
 Runtime evidence imports can also persist a separate OpenClaw handoff artifact before the evolve/review/promote loop starts.
+That handoff export is replayable, so another local operator can restore the review/resume context without rebuilding it by hand.
 
 ## Command Chain
 
@@ -18,6 +19,14 @@ If the upstream runtime handed off a richer local OpenClaw session artifact firs
 python3 -m atlas_evolution.cli openclaw-import \
   --config demo/atlas.toml \
   --file demo/openclaw_sessions/sample_operator_session.json
+```
+
+If a previous operator already exported the restart-safe bundle, replay it directly:
+
+```bash
+python3 -m atlas_evolution.cli openclaw-import \
+  --config demo/atlas.toml \
+  --file demo/state/reports/latest_openclaw_operator_handoff_bundle.json
 ```
 
 Inspect the compact governance summary:
@@ -106,4 +115,6 @@ That means a machine restart does not require rebuilding the operator queue from
 For runtime-session handoff before `evolve`, Atlas also writes:
 
 - `reports/latest_openclaw_import.json`: latest raw OpenClaw session artifact plus the adapted envelope chain
+- `reports/latest_runtime_session_report.json`: latest session-level evidence bundle for local review
 - `reports/latest_openclaw_operator_handoff.json`: latest checkpoint-oriented resume artifact with exact `inspect` and `feedback`/`evolve` commands
+- `reports/latest_openclaw_operator_handoff_bundle.json`: latest replayable export bundle that can be fed back into `openclaw-import`

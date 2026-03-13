@@ -125,9 +125,19 @@ class RuntimeIngestTests(unittest.TestCase):
             self.assertEqual(payload["handoff"]["last_checkpoint"]["checkpoint_id"], "cp-risk")
             self.assertIn("evolve", payload["handoff"]["resume_commands"])
             self.assertTrue(Path(payload["import_artifact_path"]).exists())
+            self.assertTrue(Path(payload["runtime_session_report_path"]).exists())
             self.assertTrue(Path(payload["handoff_report_path"]).exists())
+            self.assertTrue(Path(payload["handoff_bundle_path"]).exists())
             self.assertTrue(Path(payload["latest_import_artifact_path"]).exists())
+            self.assertTrue(Path(payload["latest_runtime_session_report_path"]).exists())
             self.assertTrue(Path(payload["latest_handoff_report_path"]).exists())
+            self.assertTrue(Path(payload["latest_handoff_bundle_path"]).exists())
+            self.assertEqual(payload["runtime_session_report"]["session_id"], "sess-openclaw")
+            self.assertEqual(payload["handoff_bundle"]["report_kind"], "openclaw_operator_handoff_bundle")
+            self.assertEqual(
+                payload["handoff_bundle"]["artifact_paths"]["handoff_bundle_path"],
+                payload["handoff_bundle_path"],
+            )
 
             orchestrator = AtlasOrchestrator(load_config(config_path))
             raw_envelopes = orchestrator.feedback_store.iter_runtime_event_envelopes()
@@ -192,6 +202,101 @@ class RuntimeIngestTests(unittest.TestCase):
             self.assertEqual(payload["handoff"]["session_state"], "awaiting_feedback")
             self.assertIn("record_feedback", payload["handoff"]["resume_commands"])
             self.assertTrue(Path(payload["latest_handoff_report_path"]).exists())
+            self.assertTrue(Path(payload["latest_handoff_bundle_path"]).exists())
+            self.assertEqual(payload["runtime_session_report"]["raw_session_outcome"]["status"], "incomplete")
+
+    def test_cli_openclaw_import_replays_handoff_bundle_into_fresh_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = Path(tmp) / "source"
+            source_root.mkdir()
+            _, source_config = build_orchestrator(source_root)
+            payload_path = source_root / "openclaw_session.json"
+            payload_path.write_text(
+                json.dumps(
+                    {
+                        "artifact_kind": "openclaw_operator_session",
+                        "schema_version": "1.0",
+                        "source": "openclaw-local",
+                        "recorded_at": "2026-03-10T10:06:00+00:00",
+                        "session": {
+                            "session_id": "sess-bundle-replay",
+                            "task": "review postgres migration rollback safety",
+                            "started_at": "2026-03-10T10:00:00+00:00",
+                            "operator": "test-suite",
+                            "selected_skill_ids": ["code_review"],
+                        },
+                        "timeline": [
+                            {
+                                "checkpoint_id": "cp-risk",
+                                "occurred_at": "2026-03-10T10:04:00+00:00",
+                                "step": "inspect rollback risk",
+                                "status": "blocked",
+                                "missing_capabilities": ["database migrations"],
+                            }
+                        ],
+                        "outcome": {
+                            "occurred_at": "2026-03-10T10:05:00+00:00",
+                            "status": "failure",
+                            "score": 0.2,
+                            "comment": "missed rollback coverage",
+                            "missing_capabilities": ["database migrations"],
+                        },
+                        "handoff": {
+                            "summary": "Paused after rollback risk inspection.",
+                            "next_action": "Verify lock-time risk before promotion.",
+                            "assignee": "db-oncall",
+                        },
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            import_stdout = io.StringIO()
+            with contextlib.redirect_stdout(import_stdout):
+                import_result = main(["openclaw-import", "--config", str(source_config), "--file", str(payload_path)])
+
+            self.assertEqual(import_result, 0)
+            import_payload = json.loads(import_stdout.getvalue())
+            bundle_path = Path(import_payload["handoff_bundle_path"])
+            self.assertTrue(bundle_path.exists())
+
+            target_root = Path(tmp) / "target"
+            target_root.mkdir()
+            _, target_config = build_orchestrator(target_root)
+            replay_stdout = io.StringIO()
+            with contextlib.redirect_stdout(replay_stdout):
+                replay_result = main(["openclaw-import", "--config", str(target_config), "--file", str(bundle_path)])
+
+            self.assertEqual(replay_result, 0)
+            replay_payload = json.loads(replay_stdout.getvalue())
+            self.assertEqual(replay_payload["import_mode"], "handoff_bundle_replay")
+            self.assertEqual(replay_payload["ingested"], 2)
+            self.assertEqual(replay_payload["skipped_existing_envelopes"], 0)
+            self.assertEqual(replay_payload["projected_feedback_records"], 1)
+            self.assertEqual(replay_payload["skipped_existing_projected_feedback"], 0)
+            self.assertTrue(Path(replay_payload["runtime_session_report_path"]).exists())
+            self.assertTrue(Path(replay_payload["handoff_bundle_path"]).exists())
+            self.assertEqual(
+                replay_payload["handoff_bundle"]["artifact_paths"]["handoff_bundle_path"],
+                replay_payload["handoff_bundle_path"],
+            )
+
+            target_orchestrator = AtlasOrchestrator(load_config(target_config))
+            self.assertEqual(len(target_orchestrator.feedback_store.iter_runtime_event_envelopes()), 2)
+            self.assertEqual(len(target_orchestrator.feedback_store.iter_projected_feedback_records()), 1)
+
+            repeat_stdout = io.StringIO()
+            with contextlib.redirect_stdout(repeat_stdout):
+                repeat_result = main(["openclaw-import", "--config", str(target_config), "--file", str(bundle_path)])
+
+            self.assertEqual(repeat_result, 0)
+            repeat_payload = json.loads(repeat_stdout.getvalue())
+            self.assertEqual(repeat_payload["ingested"], 0)
+            self.assertEqual(repeat_payload["skipped_existing_envelopes"], 2)
+            self.assertEqual(repeat_payload["projected_feedback_records"], 0)
+            self.assertEqual(repeat_payload["skipped_existing_projected_feedback"], 1)
 
     def test_runtime_session_report_surfaces_openclaw_handoff_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -165,8 +165,11 @@ Atlas writes three persistent ledgers plus optional operator report artifacts in
 - `runtime_event_envelopes.jsonl`: raw OpenClaw/Atlas event envelopes
 - `projected_feedback.jsonl`: projected evolution feedback records
 - `reports/openclaw_import_<session-id>.json`: raw imported operator artifact plus the adapted envelopes and projected feedback records
+- `reports/openclaw_operator_handoff_bundle_<session-id>.json`: export bundle that keeps the source artifact, runtime session report, handoff payload, adapted envelopes, and projected feedback together for local replay
 - `reports/openclaw_operator_handoff_<session-id>.json`: session summary, last checkpoint, missing capabilities, and exact resume commands for the next local operator
 - `reports/runtime_session_report_<session-id>.json|md`: operator evidence bundle with raw outcome, selected skills, missing capabilities, projected evolution signals, and promotion-risk notes
+- `reports/latest_runtime_session_report.json`: latest JSON runtime evidence bundle written during `openclaw-import`
+- `reports/latest_openclaw_operator_handoff_bundle.json`: latest replayable handoff/export bundle for restart-safe or cross-session local recovery
 - `reports/latest_evolution_report.json`: latest local evolution proposals plus gate policy, readiness, risk, and rollback metadata
 - `reports/latest_governance_report.json|md`: operator-facing promotion-readiness and rollback inspection report
 - `reports/latest_operator_review.json`: latest persisted operator review queue for restart-safe recovery
@@ -215,3 +218,13 @@ That surface joins each proposal with:
 - promotion readiness (`ready_for_promotion`, `operator_review_required`, or `blocked`)
 - deterministic risk level and operator action hints
 - local rollback context for approved prompt metadata changes
+
+Operators can replay the exported handoff bundle into a fresh local state directory with:
+
+```bash
+python3 -m atlas_evolution.cli openclaw-import \
+  --config demo/atlas.toml \
+  --file demo/state/reports/latest_openclaw_operator_handoff_bundle.json
+```
+
+That replay path preserves the stored adapted envelopes and projected feedback IDs, skips duplicates if the same bundle is imported twice, and restores the latest review/handoff artifact aliases locally.

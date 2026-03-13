@@ -12,10 +12,14 @@ from atlas_evolution.openclaw_contract import (
     OpenClawAtlasEventEnvelope,
     OpenClawAtlasSessionFeedback,
     OpenClawAtlasSessionStarted,
+    parse_openclaw_atlas_event_envelopes,
 )
 
 OPENCLAW_OPERATOR_SESSION_ARTIFACT_KIND = "openclaw_operator_session"
 OPENCLAW_OPERATOR_SESSION_SCHEMA_VERSION = "1.0"
+OPENCLAW_OPERATOR_HANDOFF_REPORT_KIND = "openclaw_operator_handoff"
+OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND = "openclaw_operator_handoff_bundle"
+OPENCLAW_OPERATOR_HANDOFF_BUNDLE_SCHEMA_VERSION = "1.0"
 ALLOWED_OPENCLAW_OPERATOR_CHECKPOINT_STATUSES = {
     "blocked",
     "cancelled",
@@ -400,6 +404,65 @@ def adapt_openclaw_operator_session_artifact(payload: Any) -> tuple[OpenClawOper
     return artifact, artifact.to_event_envelopes()
 
 
+def parse_openclaw_operator_handoff_bundle(
+    payload: Any,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("OpenClaw operator handoff bundle must be a JSON object.")
+    report_kind = payload.get("report_kind")
+    if report_kind != OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND:
+        raise ValueError(
+            "Field 'report_kind' must be "
+            f"'{OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND}' for handoff bundle import."
+        )
+    schema_version = str(payload.get("schema_version", OPENCLAW_OPERATOR_HANDOFF_BUNDLE_SCHEMA_VERSION))
+    if schema_version != OPENCLAW_OPERATOR_HANDOFF_BUNDLE_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported handoff bundle schema_version '{schema_version}'. "
+            f"Expected '{OPENCLAW_OPERATOR_HANDOFF_BUNDLE_SCHEMA_VERSION}'."
+        )
+    source_artifact_payload = _require_object(payload, "source_artifact")
+    adapted_envelopes_payload = payload.get("adapted_envelopes", [])
+    if not isinstance(adapted_envelopes_payload, list):
+        raise ValueError("Field 'adapted_envelopes' must be a list.")
+    projected_feedback_payload = payload.get("projected_feedback", [])
+    if not isinstance(projected_feedback_payload, list) or any(
+        not isinstance(item, dict) for item in projected_feedback_payload
+    ):
+        raise ValueError("Field 'projected_feedback' must be a list of objects.")
+    handoff_payload = _require_object(payload, "handoff")
+    runtime_session_report = payload.get("runtime_session_report")
+    if runtime_session_report is not None and not isinstance(runtime_session_report, dict):
+        raise ValueError("Field 'runtime_session_report' must be an object when provided.")
+
+    artifact = parse_openclaw_operator_session_artifact(source_artifact_payload)
+    envelopes = parse_openclaw_atlas_event_envelopes(adapted_envelopes_payload)
+    projected_records = [ProjectedFeedbackRecord.from_dict(item) for item in projected_feedback_payload]
+    session_id = artifact.session_id
+    if any(item.event.session_id != session_id for item in envelopes):
+        raise ValueError("All adapted envelopes in the handoff bundle must belong to one session.")
+    if any(item.feedback.session_id != session_id for item in projected_records):
+        raise ValueError("All projected feedback records in the handoff bundle must belong to one session.")
+    if handoff_payload.get("session_id") != session_id:
+        raise ValueError("Field 'handoff.session_id' must match the source artifact session_id.")
+    if runtime_session_report is not None and runtime_session_report.get("session_id") != session_id:
+        raise ValueError("Field 'runtime_session_report.session_id' must match the source artifact session_id.")
+    return {
+        "schema_version": schema_version,
+        "artifact": artifact,
+        "source_artifact": source_artifact_payload,
+        "handoff": dict(handoff_payload),
+        "adapted_envelopes": envelopes,
+        "projected_feedback": projected_records,
+        "runtime_session_report": dict(runtime_session_report) if isinstance(runtime_session_report, dict) else None,
+        "artifact_paths": dict(payload.get("artifact_paths", {})) if isinstance(payload.get("artifact_paths"), dict) else {},
+        "exported_at": payload.get("exported_at"),
+        "export_notes": list(payload.get("export_notes", []))
+        if isinstance(payload.get("export_notes"), list)
+        else [],
+    }
+
+
 def build_openclaw_operator_handoff_payload(
     artifact: OpenClawOperatorSessionArtifact,
     *,
@@ -439,7 +502,7 @@ def build_openclaw_operator_handoff_payload(
             f"--task {task_ref} --status failure --score 0.0"
         )
     return {
-        "report_kind": "openclaw_operator_handoff",
+        "report_kind": OPENCLAW_OPERATOR_HANDOFF_REPORT_KIND,
         "session_id": artifact.session_id,
         "task": artifact.task,
         "source": artifact.source,
@@ -461,4 +524,33 @@ def build_openclaw_operator_handoff_payload(
         "resume_commands": resume_commands,
         "adapted_envelopes": [item.to_dict() for item in envelopes],
         "projected_feedback": [item.to_dict() for item in projected_records],
+    }
+
+
+def build_openclaw_operator_handoff_bundle_payload(
+    artifact: OpenClawOperatorSessionArtifact,
+    *,
+    handoff: dict[str, Any],
+    runtime_session_report: dict[str, Any],
+    envelopes: list[OpenClawAtlasEventEnvelope],
+    projected_records: list[ProjectedFeedbackRecord],
+    artifact_paths: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "report_kind": OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND,
+        "schema_version": OPENCLAW_OPERATOR_HANDOFF_BUNDLE_SCHEMA_VERSION,
+        "exported_at": _utc_now(),
+        "session_id": artifact.session_id,
+        "task": artifact.task,
+        "source": artifact.source,
+        "source_artifact": artifact.to_dict(),
+        "handoff": dict(handoff),
+        "runtime_session_report": dict(runtime_session_report),
+        "adapted_envelopes": [item.to_dict() for item in envelopes],
+        "projected_feedback": [item.to_dict() for item in projected_records],
+        "artifact_paths": dict(artifact_paths),
+        "export_notes": [
+            "This bundle can be re-imported locally with atlas-evolution openclaw-import.",
+            "Adapted envelopes and projected feedback are preserved so review and replay do not depend on terminal scrollback.",
+        ],
     }

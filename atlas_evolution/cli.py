@@ -14,6 +14,11 @@ from atlas_evolution.evolution.governance import (
     render_promotion_markdown,
 )
 from atlas_evolution.models import EvolutionReport
+from atlas_evolution.runtime.openclaw_adapter import (
+    OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND,
+    build_openclaw_operator_handoff_bundle_payload,
+    parse_openclaw_operator_session_artifact,
+)
 from atlas_evolution.runtime.orchestrator import AtlasOrchestrator
 from atlas_evolution.runtime.proxy import run_server
 from atlas_evolution.workflow_state import build_resume_payload, build_workflow_state, render_resume_markdown
@@ -61,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     openclaw_import_parser = subparsers.add_parser(
         "openclaw-import",
-        help="Import a local OpenClaw operator session artifact into Atlas runtime ledgers.",
+        help="Import a local OpenClaw operator session artifact or replayable handoff bundle into Atlas runtime ledgers.",
     )
     openclaw_import_parser.add_argument("--config", default="demo/atlas.toml")
     openclaw_import_parser.add_argument(
@@ -197,6 +202,57 @@ def _read_report_payloads(file_paths: list[str]) -> list[object]:
     return [json.loads(sys.stdin.read() or "{}")]
 
 
+def _is_openclaw_handoff_bundle(payload: object) -> bool:
+    return isinstance(payload, dict) and payload.get("report_kind") == OPENCLAW_OPERATOR_HANDOFF_BUNDLE_REPORT_KIND
+
+
+def _persist_openclaw_import_chain(
+    orchestrator: AtlasOrchestrator,
+    *,
+    session_id: str,
+    import_artifact: dict[str, object],
+    handoff: dict[str, object],
+    runtime_session_report: dict[str, object],
+    handoff_bundle: dict[str, object] | None = None,
+) -> dict[str, Path]:
+    paths = {
+        "import_artifact_path": orchestrator.feedback_store.write_report(
+            f"openclaw_import_{session_id}.json",
+            import_artifact,
+        ),
+        "latest_import_artifact_path": orchestrator.feedback_store.write_report(
+            "latest_openclaw_import.json",
+            import_artifact,
+        ),
+        "runtime_session_report_path": orchestrator.feedback_store.write_report(
+            f"runtime_session_report_{session_id}.json",
+            runtime_session_report,
+        ),
+        "latest_runtime_session_report_path": orchestrator.feedback_store.write_report(
+            "latest_runtime_session_report.json",
+            runtime_session_report,
+        ),
+        "handoff_report_path": orchestrator.feedback_store.write_report(
+            f"openclaw_operator_handoff_{session_id}.json",
+            handoff,
+        ),
+        "latest_handoff_report_path": orchestrator.feedback_store.write_report(
+            "latest_openclaw_operator_handoff.json",
+            handoff,
+        ),
+    }
+    if handoff_bundle is not None:
+        paths["handoff_bundle_path"] = orchestrator.feedback_store.write_report(
+            f"openclaw_operator_handoff_bundle_{session_id}.json",
+            handoff_bundle,
+        )
+        paths["latest_handoff_bundle_path"] = orchestrator.feedback_store.write_report(
+            "latest_openclaw_operator_handoff_bundle.json",
+            handoff_bundle,
+        )
+    return paths
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     try:
@@ -223,47 +279,116 @@ def cmd_openclaw_import(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     try:
         payload = _read_ingest_payload(args.file)
-        handoff, envelopes, projected_records = orchestrator.import_openclaw_operator_session(payload)
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        raise SystemExit(f"Invalid OpenClaw operator artifact: {error}") from error
-    import_artifact = {
-        "report_kind": "openclaw_operator_import",
-        "source_artifact": payload,
-        "adapted_envelopes": [event.to_dict() for event in envelopes],
-        "projected_feedback": [record.to_dict() for record in projected_records],
-        "handoff": handoff,
-    }
-    session_id = handoff["session_id"]
-    import_artifact_path = orchestrator.feedback_store.write_report(
-        f"openclaw_import_{session_id}.json",
-        import_artifact,
-    )
-    latest_import_artifact_path = orchestrator.feedback_store.write_report(
-        "latest_openclaw_import.json",
-        import_artifact,
-    )
-    handoff_report_path = orchestrator.feedback_store.write_report(
-        f"openclaw_operator_handoff_{session_id}.json",
-        handoff,
-    )
-    latest_handoff_report_path = orchestrator.feedback_store.write_report(
-        "latest_openclaw_operator_handoff.json",
-        handoff,
-    )
-    print(
-        json.dumps(
-            {
+        if _is_openclaw_handoff_bundle(payload):
+            handoff, runtime_session_report, envelopes, projected_records, envelope_import, projected_import = (
+                orchestrator.import_openclaw_handoff_bundle(payload)
+            )
+            session_id = str(handoff["session_id"])
+            reports_dir = orchestrator.feedback_store.reports_dir
+            restored_bundle = dict(payload)
+            restored_bundle["artifact_paths"] = {
+                "import_artifact_path": str(reports_dir / f"openclaw_import_{session_id}.json"),
+                "latest_import_artifact_path": str(reports_dir / "latest_openclaw_import.json"),
+                "runtime_session_report_path": str(reports_dir / f"runtime_session_report_{session_id}.json"),
+                "latest_runtime_session_report_path": str(reports_dir / "latest_runtime_session_report.json"),
+                "handoff_report_path": str(reports_dir / f"openclaw_operator_handoff_{session_id}.json"),
+                "latest_handoff_report_path": str(reports_dir / "latest_openclaw_operator_handoff.json"),
+                "handoff_bundle_path": str(reports_dir / f"openclaw_operator_handoff_bundle_{session_id}.json"),
+                "latest_handoff_bundle_path": str(reports_dir / "latest_openclaw_operator_handoff_bundle.json"),
+            }
+            import_artifact = {
+                "report_kind": "openclaw_operator_import",
+                "source_artifact": payload["source_artifact"],
+                "adapted_envelopes": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "handoff": handoff,
+                "runtime_session_report": runtime_session_report,
+                "import_mode": "handoff_bundle_replay",
+            }
+            persisted_paths = _persist_openclaw_import_chain(
+                orchestrator,
+                session_id=session_id,
+                import_artifact=import_artifact,
+                handoff=handoff,
+                runtime_session_report=runtime_session_report or {},
+                handoff_bundle=restored_bundle,
+            )
+            response = {
                 "status": "recorded",
+                "import_mode": "handoff_bundle_replay",
+                "session_id": session_id,
+                "ingested": envelope_import["recorded"],
+                "skipped_existing_envelopes": envelope_import["skipped"],
+                "projected_feedback_records": projected_import["recorded"],
+                "skipped_existing_projected_feedback": projected_import["skipped"],
+                "events": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "runtime_session_report": runtime_session_report,
+                "handoff": handoff,
+                "handoff_bundle": restored_bundle,
+            }
+        else:
+            artifact = parse_openclaw_operator_session_artifact(payload)
+            handoff, envelopes, projected_records = orchestrator.import_openclaw_operator_session(payload)
+            session_id = str(handoff["session_id"])
+            runtime_session_report = orchestrator.build_runtime_session_report_from_envelopes(
+                envelopes,
+                session_id=session_id,
+            )
+            import_artifact = {
+                "report_kind": "openclaw_operator_import",
+                "source_artifact": payload,
+                "adapted_envelopes": [event.to_dict() for event in envelopes],
+                "projected_feedback": [record.to_dict() for record in projected_records],
+                "handoff": handoff,
+                "runtime_session_report": runtime_session_report,
+                "import_mode": "operator_session_artifact",
+            }
+            reports_dir = orchestrator.feedback_store.reports_dir
+            handoff_bundle = build_openclaw_operator_handoff_bundle_payload(
+                artifact,
+                handoff=handoff,
+                runtime_session_report=runtime_session_report,
+                envelopes=envelopes,
+                projected_records=projected_records,
+                artifact_paths={
+                    "import_artifact_path": str(reports_dir / f"openclaw_import_{session_id}.json"),
+                    "latest_import_artifact_path": str(reports_dir / "latest_openclaw_import.json"),
+                    "runtime_session_report_path": str(reports_dir / f"runtime_session_report_{session_id}.json"),
+                    "latest_runtime_session_report_path": str(reports_dir / "latest_runtime_session_report.json"),
+                    "handoff_report_path": str(reports_dir / f"openclaw_operator_handoff_{session_id}.json"),
+                    "latest_handoff_report_path": str(reports_dir / "latest_openclaw_operator_handoff.json"),
+                    "handoff_bundle_path": str(reports_dir / f"openclaw_operator_handoff_bundle_{session_id}.json"),
+                    "latest_handoff_bundle_path": str(reports_dir / "latest_openclaw_operator_handoff_bundle.json"),
+                },
+            )
+            persisted_paths = _persist_openclaw_import_chain(
+                orchestrator,
+                session_id=session_id,
+                import_artifact=import_artifact,
+                handoff=handoff,
+                runtime_session_report=runtime_session_report,
+                handoff_bundle=handoff_bundle,
+            )
+            response = {
+                "status": "recorded",
+                "import_mode": "operator_session_artifact",
                 "ingested": len(envelopes),
                 "projected_feedback_records": len(projected_records),
                 "session_id": session_id,
                 "events": [event.to_dict() for event in envelopes],
                 "projected_feedback": [record.to_dict() for record in projected_records],
+                "runtime_session_report": runtime_session_report,
                 "handoff": handoff,
-                "import_artifact_path": str(import_artifact_path),
-                "latest_import_artifact_path": str(latest_import_artifact_path),
-                "handoff_report_path": str(handoff_report_path),
-                "latest_handoff_report_path": str(latest_handoff_report_path),
+                "handoff_bundle": handoff_bundle,
+            }
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"Invalid OpenClaw operator artifact: {error}") from error
+    print(
+        json.dumps(
+            {
+                **response,
+                **{name: str(path) for name, path in persisted_paths.items()},
             },
             indent=2,
         )

@@ -83,6 +83,32 @@ class FeedbackStore:
     def log_projected_feedback(self, record: ProjectedFeedbackRecord) -> None:
         self._append_jsonl(self.projected_feedback_path, record.to_dict())
 
+    def import_runtime_event_envelopes(self, envelopes: list[OpenClawAtlasEventEnvelope]) -> dict[str, int]:
+        existing_ids = {item.envelope_id for item in self.iter_runtime_event_envelopes()}
+        recorded = 0
+        skipped = 0
+        for envelope in envelopes:
+            if envelope.envelope_id in existing_ids:
+                skipped += 1
+                continue
+            self.log_runtime_event_envelope(envelope)
+            existing_ids.add(envelope.envelope_id)
+            recorded += 1
+        return {"recorded": recorded, "skipped": skipped}
+
+    def import_projected_feedback_records(self, records: list[ProjectedFeedbackRecord]) -> dict[str, int]:
+        existing_ids = {item.projection_id for item in self.iter_projected_feedback_records()}
+        recorded = 0
+        skipped = 0
+        for record in records:
+            if record.projection_id in existing_ids:
+                skipped += 1
+                continue
+            self.log_projected_feedback(record)
+            existing_ids.add(record.projection_id)
+            recorded += 1
+        return {"recorded": recorded, "skipped": skipped}
+
     def record_runtime_ingest(self, envelope: OpenClawAtlasEventEnvelope) -> ProjectedFeedbackRecord | None:
         self.log_runtime_event_envelope(envelope)
         projected = envelope.to_projected_feedback_record()

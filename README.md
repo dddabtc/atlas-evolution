@@ -153,12 +153,20 @@ Ingest runtime session events from stdin:
 cat demo/runtime_events/sample_batch.json | python3 -m atlas_evolution.cli ingest --config demo/atlas.toml
 ```
 
-Import a more realistic OpenClaw operator session bundle and persist a handoff artifact:
+Import a more realistic OpenClaw operator session bundle and persist the full handoff/export chain:
 
 ```bash
 python3 -m atlas_evolution.cli openclaw-import \
   --config demo/atlas.toml \
   --file demo/openclaw_sessions/sample_operator_session.json
+```
+
+Re-import the exported handoff bundle after a restart or into another local state directory:
+
+```bash
+python3 -m atlas_evolution.cli openclaw-import \
+  --config demo/atlas.toml \
+  --file demo/state/reports/latest_openclaw_operator_handoff_bundle.json
 ```
 
 Build a durable operator report from one or more runtime payloads:
@@ -303,14 +311,15 @@ The runtime ingest path now has a first-class local contract instead of only a g
 - supported event kinds: `session_started`, `session_feedback`
 - event schema version: `1.1`
 - accepted payloads: one envelope, a list of envelopes, or a batch object with `events`
-- explicit OpenClaw operator artifact import: `openclaw-import` accepts `demo/openclaw_sessions/sample_operator_session.json`-style session bundles and adapts them into the same local envelope/projection chain
+- explicit OpenClaw operator artifact import: `openclaw-import` accepts `demo/openclaw_sessions/sample_operator_session.json`-style session bundles and also replays exported `openclaw_operator_handoff_bundle` artifacts into the same local envelope/projection chain
 
 Each ingested item is handled in two stages:
 
 - Atlas appends the raw event envelope to `runtime_event_envelopes.jsonl`
 - Atlas projects only `session_feedback` events into `projected_feedback.jsonl`
 - Atlas can also turn one or more runtime payloads into a session evidence bundle artifact in `state/reports/`
-- `openclaw-import` additionally persists `openclaw_import_<session-id>.json` and `openclaw_operator_handoff_<session-id>.json` so another operator can resume from the last imported checkpoint without terminal scrollback
+- `openclaw-import` now persists `openclaw_import_<session-id>.json`, `runtime_session_report_<session-id>.json`, `openclaw_operator_handoff_<session-id>.json`, and `openclaw_operator_handoff_bundle_<session-id>.json`
+- the handoff bundle keeps the source artifact, adapted envelopes, projected feedback, runtime review report, and restored local artifact pointers together so another operator can re-import without terminal scrollback
 
 The evolution pipeline consumes direct operator feedback plus projected feedback records. It does not consume raw envelopes directly.
 
@@ -334,8 +343,9 @@ The governed promotion path is intentionally split into separate local steps:
 The runtime evidence side now also has a handoff-oriented chain:
 
 - `openclaw-import` adapts a realistic operator session bundle into the raw and projected ledgers
-- the import writes `latest_openclaw_import.json` and `latest_openclaw_operator_handoff.json`
+- the import writes `latest_openclaw_import.json`, `latest_runtime_session_report.json`, `latest_openclaw_operator_handoff.json`, and `latest_openclaw_operator_handoff_bundle.json`
 - the handoff artifact records the last checkpoint, missing capabilities, and exact `inspect` or `feedback`/`evolve` commands for the next local operator
+- the handoff bundle can be fed back into `openclaw-import` to restore the same local review/resume surface in a fresh state directory
 
 For a more detailed walkthrough, see [docs/operator_review_workflow.md](docs/operator_review_workflow.md).
 
