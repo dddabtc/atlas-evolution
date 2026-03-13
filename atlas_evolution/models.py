@@ -192,3 +192,51 @@ class EvolutionReport:
             for item in payload.get("evaluations", [])
         ]
         return cls(proposals=proposals, evaluations=evaluations, metadata=dict(payload.get("metadata", {})))
+
+
+@dataclass(slots=True)
+class OperatorEvolutionSignal:
+    proposal_id: str
+    proposal_type: str
+    title: str
+    summary: str
+    rationale: str
+    evidence_count: int
+    confidence: float
+    evaluation_status: str
+    evaluation_reasons: list[str] = field(default_factory=list)
+    target_id: str | None = None
+    changes: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return compact_dict(asdict(self))
+
+
+@dataclass(slots=True)
+class OperatorEvidenceReport:
+    report_kind: str
+    session_id: str
+    task: str
+    sources: list[str]
+    raw_session_outcome: dict[str, Any]
+    selected_skills: list[dict[str, Any]]
+    missing_capabilities: list[str]
+    projected_evolution_signals: list[OperatorEvolutionSignal]
+    promotion_risk_notes: list[str]
+    evidence: dict[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "report_kind": self.report_kind,
+            "session_id": self.session_id,
+            "task": self.task,
+            "sources": list(self.sources),
+            "raw_session_outcome": dict(self.raw_session_outcome),
+            "selected_skills": [dict(item) for item in self.selected_skills],
+            "missing_capabilities": list(self.missing_capabilities),
+            "projected_evolution_signals": [item.to_dict() for item in self.projected_evolution_signals],
+            "promotion_risk_notes": list(self.promotion_risk_notes),
+            "evidence": dict(self.evidence),
+            "metadata": dict(self.metadata),
+        }

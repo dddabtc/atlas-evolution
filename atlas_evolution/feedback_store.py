@@ -155,3 +155,8 @@ class FeedbackStore:
         path = self.reports_dir / name
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         return path
+
+    def write_text_report(self, name: str, body: str) -> Path:
+        path = self.reports_dir / name
+        path.write_text(body, encoding="utf-8")
+        return path

@@ -48,6 +48,7 @@ atlas_evolution/
   runtime/
     orchestrator.py      # Ties config, retrieval, feedback, evolution together
     proxy.py             # Minimal local HTTP server
+    report_adapter.py    # Operator evidence bundle adapter for runtime sessions
 tests/
 demo/
   atlas.toml             # Runnable demo config
@@ -66,6 +67,7 @@ Implemented in v1.1:
 - append-only event and feedback storage
 - formal OpenClaw/Atlas event contract with typed envelope and event models
 - CLI ingest from file or stdin
+- CLI runtime-session report generation in JSON or markdown
 - operator-visible inspect command over raw-to-projected ingest history
 - local HTTP ingest endpoint for runtime events
 - heuristic prompt-update proposals
@@ -139,6 +141,16 @@ Ingest runtime session events from stdin:
 
 ```bash
 cat demo/runtime_events/sample_batch.json | python3 -m atlas_evolution.cli ingest --config demo/atlas.toml
+```
+
+Build a durable operator report from one or more runtime payloads:
+
+```bash
+python3 -m atlas_evolution.cli report \
+  --config demo/atlas.toml \
+  --file demo/runtime_events/sample_batch.json \
+  --format markdown \
+  --write-report
 ```
 
 Inspect the raw envelope and projected feedback audit chain:
@@ -231,6 +243,7 @@ Each ingested item is handled in two stages:
 
 - Atlas appends the raw event envelope to `runtime_event_envelopes.jsonl`
 - Atlas projects only `session_feedback` events into `projected_feedback.jsonl`
+- Atlas can also turn one or more runtime payloads into a session evidence bundle artifact in `state/reports/`
 
 The evolution pipeline consumes direct operator feedback plus projected feedback records. It does not consume raw envelopes directly.
 

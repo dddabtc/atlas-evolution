@@ -50,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read JSON from a file. If omitted, JSON is read from stdin.",
     )
 
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Build an operator evidence report from runtime session event payloads.",
+    )
+    report_parser.add_argument("--config", default="demo/atlas.toml")
+    report_parser.add_argument("--file", action="append", default=[], help="Read JSON from one or more files.")
+    report_parser.add_argument("--session-id")
+    report_parser.add_argument("--format", choices=["json", "markdown"], default="json")
+    report_parser.add_argument("--write-report", action="store_true")
+
     inspect_parser = subparsers.add_parser(
         "inspect",
         help="Inspect raw runtime event envelopes and projected feedback records.",
@@ -126,6 +136,12 @@ def _read_ingest_payload(file_path: str | None) -> object:
     return json.loads(sys.stdin.read() or "{}")
 
 
+def _read_report_payloads(file_paths: list[str]) -> list[object]:
+    if file_paths:
+        return [json.loads(Path(path).read_text(encoding="utf-8")) for path in file_paths]
+    return [json.loads(sys.stdin.read() or "{}")]
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     try:
@@ -146,6 +162,36 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    try:
+        payloads = _read_report_payloads(list(args.file))
+        if args.format == "json":
+            payload = orchestrator.build_runtime_session_report(payloads=payloads, session_id=args.session_id)
+            if args.write_report:
+                report_path = orchestrator.feedback_store.write_report(
+                    f"runtime_session_report_{payload['session_id']}.json",
+                    payload,
+                )
+                payload = {"report_path": str(report_path), **payload}
+            print(json.dumps(payload, indent=2))
+            return 0
+        rendered = orchestrator.render_runtime_session_report_markdown(payloads=payloads, session_id=args.session_id)
+        if args.write_report:
+            session_payload = orchestrator.build_runtime_session_report(payloads=payloads, session_id=args.session_id)
+            report_path = orchestrator.feedback_store.write_text_report(
+                f"runtime_session_report_{session_payload['session_id']}.md",
+                rendered,
+            )
+            print(rendered, end="")
+            print(f"\nReport path: {report_path}")
+            return 0
+        print(rendered, end="")
+        return 0
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"Invalid report payload: {error}") from error
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
@@ -199,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         "route": cmd_route,
         "feedback": cmd_feedback,
         "ingest": cmd_ingest,
+        "report": cmd_report,
         "inspect": cmd_inspect,
         "evolve": cmd_evolve,
         "promote": cmd_promote,

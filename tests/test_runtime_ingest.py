@@ -171,6 +171,161 @@ class RuntimeIngestTests(unittest.TestCase):
             )
             self.assertTrue(Path(report["report_path"]).exists())
 
+    def test_cli_report_builds_json_evidence_bundle_from_multiple_payload_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, config_path = build_orchestrator(root)
+            started_path = root / "started.json"
+            feedback_path = root / "feedback.json"
+            started_path.write_text(
+                json.dumps(
+                    {
+                        "contract_name": "openclaw_atlas.runtime_event",
+                        "contract_version": "1.0",
+                        "source": "openclaw-local",
+                        "envelope_id": "env-start",
+                        "recorded_at": "2026-03-10T10:00:00+00:00",
+                        "event": {
+                            "schema_version": "1.1",
+                            "event_id": "evt-start",
+                            "event_kind": "session_started",
+                            "occurred_at": "2026-03-10T09:59:00+00:00",
+                            "session_id": "sess-report",
+                            "task": "review postgres migration rollback safety",
+                            "selected_skill_ids": ["code_review"],
+                        },
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            feedback_path.write_text(
+                json.dumps(
+                    {
+                        "contract_name": "openclaw_atlas.runtime_event",
+                        "contract_version": "1.0",
+                        "source": "openclaw-local",
+                        "envelope_id": "env-feedback",
+                        "recorded_at": "2026-03-10T10:05:00+00:00",
+                        "event": {
+                            "schema_version": "1.1",
+                            "event_id": "evt-feedback",
+                            "event_kind": "session_feedback",
+                            "occurred_at": "2026-03-10T10:04:00+00:00",
+                            "session_id": "sess-report",
+                            "task": "review postgres migration rollback safety",
+                            "status": "failure",
+                            "score": 0.2,
+                            "comment": "missed rollback coverage",
+                            "selected_skill_ids": ["code_review"],
+                            "missing_capabilities": ["database migrations"],
+                        },
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "report",
+                        "--config",
+                        str(config_path),
+                        "--file",
+                        str(started_path),
+                        "--file",
+                        str(feedback_path),
+                        "--write-report",
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            report = json.loads(stdout.getvalue())
+            self.assertEqual(report["session_id"], "sess-report")
+            self.assertEqual(report["raw_session_outcome"]["status"], "failure")
+            self.assertEqual(report["raw_session_outcome"]["score"], 0.2)
+            self.assertEqual(report["selected_skills"][0]["skill_id"], "code_review")
+            self.assertEqual(report["missing_capabilities"], ["database migrations"])
+            signal_types = {item["proposal_type"] for item in report["projected_evolution_signals"]}
+            self.assertIn("prompt_update", signal_types)
+            self.assertIn("capability_gap", signal_types)
+            self.assertTrue(any("manual review" in note.lower() for note in report["promotion_risk_notes"]))
+            self.assertTrue(Path(report["report_path"]).exists())
+
+    def test_cli_report_emits_markdown_evidence_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _, config_path = build_orchestrator(root)
+            payload_path = root / "runtime_events.json"
+            payload_path.write_text(
+                json.dumps(
+                    {
+                        "contract_name": "openclaw_atlas.runtime_event",
+                        "contract_version": "1.0",
+                        "source": "openclaw-local",
+                        "metadata": {"operator": "test-suite"},
+                        "events": [
+                            {
+                                "schema_version": "1.1",
+                                "event_id": "evt-start",
+                                "event_kind": "session_started",
+                                "occurred_at": "2026-03-10T09:59:00+00:00",
+                                "session_id": "sess-md",
+                                "task": "review postgres migration rollback safety",
+                                "selected_skill_ids": ["code_review"],
+                            },
+                            {
+                                "schema_version": "1.1",
+                                "event_id": "evt-feedback",
+                                "event_kind": "session_feedback",
+                                "occurred_at": "2026-03-10T10:04:00+00:00",
+                                "session_id": "sess-md",
+                                "task": "review postgres migration rollback safety",
+                                "status": "failure",
+                                "score": 0.2,
+                                "comment": "missed rollback coverage",
+                                "selected_skill_ids": ["code_review"],
+                                "missing_capabilities": ["database migrations"],
+                            },
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                result = main(
+                    [
+                        "report",
+                        "--config",
+                        str(config_path),
+                        "--file",
+                        str(payload_path),
+                        "--format",
+                        "markdown",
+                        "--write-report",
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            output = stdout.getvalue()
+            self.assertIn("# Atlas Runtime Session Report", output)
+            self.assertIn("## Raw Session Outcome", output)
+            self.assertIn("- Status: failure", output)
+            self.assertIn("## Projected Evolution Signals", output)
+            self.assertIn("capability-database-migrations", output)
+            report_path_line = [line for line in output.splitlines() if line.startswith("Report path: ")]
+            self.assertEqual(len(report_path_line), 1)
+            report_path = Path(report_path_line[0].split(": ", 1)[1])
+            self.assertTrue(report_path.exists())
+
     def test_pipeline_consumes_ingested_runtime_feedback_and_existing_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

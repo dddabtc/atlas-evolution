@@ -7,6 +7,7 @@ from atlas_evolution.config import AtlasConfig, load_config
 from atlas_evolution.feedback_store import FeedbackStore
 from atlas_evolution.models import FeedbackRecord, ProjectedFeedbackRecord
 from atlas_evolution.openclaw_contract import OpenClawAtlasEventEnvelope, parse_openclaw_atlas_event_envelopes
+from atlas_evolution.runtime.report_adapter import RuntimeSessionReportAdapter
 from atlas_evolution.skill_bank import SkillBank
 
 from atlas_evolution.evolution.pipeline import EvolutionPipeline
@@ -19,6 +20,11 @@ class AtlasOrchestrator:
         self.feedback_store = FeedbackStore(config.paths.state_dir)
         self.pipeline = EvolutionPipeline(
             store=self.feedback_store,
+            skill_bank=self.skill_bank,
+            min_evidence=config.runtime.min_evidence,
+            approval_threshold=config.runtime.approval_threshold,
+        )
+        self.report_adapter = RuntimeSessionReportAdapter(
             skill_bank=self.skill_bank,
             min_evidence=config.runtime.min_evidence,
             approval_threshold=config.runtime.approval_threshold,
@@ -86,3 +92,24 @@ class AtlasOrchestrator:
 
     def build_runtime_ingest_report(self, session_id: str | None = None, limit: int | None = 20) -> dict[str, object]:
         return self.feedback_store.build_runtime_ingest_report(session_id=session_id, limit=limit)
+
+    def build_runtime_session_report(
+        self,
+        payloads: list[object],
+        session_id: str | None = None,
+    ) -> dict[str, object]:
+        envelopes: list[OpenClawAtlasEventEnvelope] = []
+        for payload in payloads:
+            envelopes.extend(parse_openclaw_atlas_event_envelopes(payload))
+        return self.report_adapter.build_report(envelopes, session_id=session_id).to_dict()
+
+    def render_runtime_session_report_markdown(
+        self,
+        payloads: list[object],
+        session_id: str | None = None,
+    ) -> str:
+        envelopes: list[OpenClawAtlasEventEnvelope] = []
+        for payload in payloads:
+            envelopes.extend(parse_openclaw_atlas_event_envelopes(payload))
+        report = self.report_adapter.build_report(envelopes, session_id=session_id)
+        return self.report_adapter.render_markdown(report)

@@ -114,11 +114,12 @@ The pipeline does not consume raw envelopes directly.
 
 ## Local Audit Surface
 
-Atlas writes three local review artifacts in the configured state directory:
+Atlas writes three persistent ledgers plus optional operator report artifacts in the configured state directory:
 
 - `events.jsonl`: routed sessions and direct feedback
 - `runtime_event_envelopes.jsonl`: raw OpenClaw/Atlas event envelopes
 - `projected_feedback.jsonl`: projected evolution feedback records
+- `reports/runtime_session_report_<session-id>.json|md`: operator evidence bundle with raw outcome, selected skills, missing capabilities, projected evolution signals, and promotion-risk notes
 
 Operators can inspect the chain with:
 
@@ -127,3 +128,21 @@ python3 -m atlas_evolution.cli inspect --config demo/atlas.toml --write-report
 ```
 
 That report shows each raw envelope beside the projected feedback record, if any, so the evidence path remains deterministic and reviewable.
+
+Operators can also build a session-level evidence bundle directly from one or more payloads:
+
+```bash
+python3 -m atlas_evolution.cli report \
+  --config demo/atlas.toml \
+  --file demo/runtime_events/sample_batch.json \
+  --format json \
+  --write-report
+```
+
+The report adapter does not call an LLM. It deterministically summarizes:
+
+- raw session outcome
+- selected skills
+- missing capabilities
+- projected evolution signals from the local heuristic pipeline
+- promotion-risk notes derived from the offline evaluation gate
