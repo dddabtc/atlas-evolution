@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from atlas_evolution.models import FeedbackRecord
+from atlas_evolution.runtime_events import RuntimeSessionEvent
 
 
 def utc_now() -> str:
@@ -54,6 +55,9 @@ class FeedbackStore:
     def log_feedback(self, record: FeedbackRecord) -> None:
         self.append_event("feedback_recorded", record.to_dict())
 
+    def log_runtime_event(self, event: RuntimeSessionEvent) -> None:
+        self.append_event("runtime_session_event", event.to_dict())
+
     def iter_events(self) -> list[dict[str, Any]]:
         if not self.events_path.exists():
             return []
@@ -66,22 +70,28 @@ class FeedbackStore:
     def load_feedback(self) -> list[FeedbackRecord]:
         records: list[FeedbackRecord] = []
         for event in self.iter_events():
-            if event.get("event_type") != "feedback_recorded":
-                continue
+            event_type = event.get("event_type")
             payload = event["payload"]
-            records.append(
-                FeedbackRecord(
-                    session_id=payload["session_id"],
-                    task=payload["task"],
-                    status=payload["status"],
-                    score=float(payload["score"]),
-                    comment=payload.get("comment"),
-                    steps=list(payload.get("steps", [])),
-                    selected_skill_ids=list(payload.get("selected_skill_ids", [])),
-                    missing_capabilities=list(payload.get("missing_capabilities", [])),
-                    metadata=dict(payload.get("metadata", {})),
+            if event_type == "feedback_recorded":
+                records.append(
+                    FeedbackRecord(
+                        session_id=payload["session_id"],
+                        task=payload["task"],
+                        status=payload["status"],
+                        score=float(payload["score"]),
+                        comment=payload.get("comment"),
+                        steps=list(payload.get("steps", [])),
+                        selected_skill_ids=list(payload.get("selected_skill_ids", [])),
+                        missing_capabilities=list(payload.get("missing_capabilities", [])),
+                        metadata=dict(payload.get("metadata", {})),
+                    )
                 )
-            )
+                continue
+            if event_type == "runtime_session_event":
+                runtime_event = RuntimeSessionEvent.from_dict(payload)
+                feedback = runtime_event.to_feedback_record()
+                if feedback is not None:
+                    records.append(feedback)
         return records
 
     def write_report(self, name: str, payload: dict[str, Any]) -> Path:

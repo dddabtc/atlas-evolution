@@ -17,10 +17,13 @@ def _json_response(handler: BaseHTTPRequestHandler, status: HTTPStatus, payload:
     handler.wfile.write(encoded)
 
 
-def _parse_body(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
+def _parse_body(handler: BaseHTTPRequestHandler) -> Any:
     length = int(handler.headers.get("Content-Length", "0"))
     raw = handler.rfile.read(length) if length else b"{}"
-    return json.loads(raw.decode("utf-8") or "{}")
+    try:
+        return json.loads(raw.decode("utf-8") or "{}")
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid JSON body: {error.msg}") from error
 
 
 def make_handler(orchestrator: AtlasOrchestrator) -> type[BaseHTTPRequestHandler]:
@@ -36,7 +39,14 @@ def make_handler(orchestrator: AtlasOrchestrator) -> type[BaseHTTPRequestHandler
 
         def do_POST(self) -> None:  # noqa: N802
             if self.path == "/v1/route":
-                body = _parse_body(self)
+                try:
+                    body = _parse_body(self)
+                except ValueError as error:
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                if not isinstance(body, dict):
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"error": "request body must be a JSON object"})
+                    return
                 task = str(body.get("task", "")).strip()
                 if not task:
                     _json_response(self, HTTPStatus.BAD_REQUEST, {"error": "task is required"})
@@ -45,7 +55,14 @@ def make_handler(orchestrator: AtlasOrchestrator) -> type[BaseHTTPRequestHandler
                 _json_response(self, HTTPStatus.OK, payload)
                 return
             if self.path == "/v1/feedback":
-                body = _parse_body(self)
+                try:
+                    body = _parse_body(self)
+                except ValueError as error:
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                if not isinstance(body, dict):
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"error": "request body must be a JSON object"})
+                    return
                 try:
                     record = orchestrator.record_feedback(
                         session_id=str(body["session_id"]),
@@ -62,6 +79,23 @@ def make_handler(orchestrator: AtlasOrchestrator) -> type[BaseHTTPRequestHandler
                     _json_response(self, HTTPStatus.BAD_REQUEST, {"error": f"missing field: {error.args[0]}"})
                     return
                 _json_response(self, HTTPStatus.OK, {"status": "recorded", "feedback": record.to_dict()})
+                return
+            if self.path == "/v1/ingest":
+                try:
+                    body = _parse_body(self)
+                    events = orchestrator.ingest_runtime_events(body)
+                except ValueError as error:
+                    _json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(error)})
+                    return
+                _json_response(
+                    self,
+                    HTTPStatus.OK,
+                    {
+                        "status": "recorded",
+                        "ingested": len(events),
+                        "events": [event.to_dict() for event in events],
+                    },
+                )
                 return
             _json_response(self, HTTPStatus.NOT_FOUND, {"error": "not_found"})
 

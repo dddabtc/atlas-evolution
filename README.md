@@ -2,31 +2,31 @@
 
 [🇨🇳 中文文档](README_zh.md)
 
-Atlas Evolution v1 is a local, governed evolution layer for Atlas/OpenClaw-like agents.
+Atlas Evolution v1.1 is a local, governed evolution layer for Atlas/OpenClaw-like agents.
 
 It does **not** claim autonomous self-improvement is solved. This repo ships a practical product skeleton that can be run and demoed locally:
 
 - local config and CLI
 - skill loading and retrieval
-- feedback and event logging
+- append-only feedback and runtime-event logging
 - post-session evolution proposal generation
 - an evaluation gate before promotion
 - a minimal HTTP proxy/orchestration surface
 
 V1 deliberately excludes online RL, OPD, cloud training, and blind self-modification.
 
-## What v1 actually does
+## What v1.1 actually does
 
 Atlas Evolution sits beside an agent runtime instead of replacing it.
 
 1. A task comes in through the CLI or local proxy.
 2. The orchestrator retrieves the most relevant local skills.
 3. Atlas Evolution returns a prompt bundle for the downstream agent and logs the session start.
-4. After the run, the operator records feedback, score, steps, and missing capabilities.
-5. The evolution pipeline analyzes the feedback log and produces reviewable proposals.
+4. After the run, the operator can either record feedback directly or ingest conservative runtime session events from a local file/stdin or local HTTP endpoint.
+5. The evolution pipeline analyzes the append-only ledger, projects feedback-shaped runtime events, and produces reviewable proposals.
 6. The evaluation gate approves only supported prompt-metadata changes; scaffolded proposal types stay manual-review only.
 
-That makes v1 a **governed evolution pipeline**, not an autonomous learning system.
+That makes v1.1 a **governed evolution pipeline**, not an autonomous learning system.
 
 ## Architecture
 
@@ -35,6 +35,7 @@ atlas_evolution/
   cli.py                 # Local CLI entrypoint
   config.py              # TOML config loader
   models.py              # Shared dataclasses
+  runtime_events.py      # Typed runtime ingest schema + validation
   skill_bank.py          # Skill loading + keyword retrieval
   feedback_store.py      # Append-only JSONL event store
   evolution/
@@ -50,30 +51,35 @@ tests/
 demo/
   atlas.toml             # Runnable demo config
   skills/*.json          # Seed skill bank
+  runtime_events/*.json  # Sample ingest payloads
   state/                 # Local event/report output
 ```
 
 ## Honest scope
 
-Implemented in v1:
+Implemented in v1.1:
 
 - local TOML config loading
 - skill manifests from JSON
 - deterministic local retrieval
 - append-only event and feedback storage
+- typed runtime session-event ingest schema
+- CLI ingest from file or stdin
+- local HTTP ingest endpoint for runtime events
 - heuristic prompt-update proposals
 - heuristic workflow and capability proposals
 - offline evaluation gate
 - explicit promotion step for approved prompt updates
-- local HTTP endpoints for route and feedback
+- local HTTP endpoints for route, feedback, and ingest
 
-Scaffolded in v1:
+Scaffolded in v1.1:
 
 - `workflow_discoverer.py`: advisory workflow candidates only
 - `capability_assessor.py`: advisory capability-gap suggestions only
 - evaluation is offline and heuristic, not benchmark-backed
 - no LLM calls are made by this repo
 - no automatic deployment into Atlas/OpenClaw yet
+- runtime ingest is local only and does not reach out to remote runtimes
 
 ## Quick Start
 
@@ -117,6 +123,20 @@ python3 -m atlas_evolution.cli feedback \
   --comment "missed postgres migration issues" \
   --skill code_review \
   --missing-capability "database migrations"
+```
+
+Ingest runtime session events from a file:
+
+```bash
+python3 -m atlas_evolution.cli ingest \
+  --config demo/atlas.toml \
+  --file demo/runtime_events/sample_batch.json
+```
+
+Ingest runtime session events from stdin:
+
+```bash
+cat demo/runtime_events/sample_batch.json | python3 -m atlas_evolution.cli ingest --config demo/atlas.toml
 ```
 
 Generate proposals and gate them:
@@ -169,6 +189,38 @@ curl -X POST http://127.0.0.1:8765/v1/feedback \
   }'
 ```
 
+Runtime ingest request:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source":"openclaw-local",
+    "event_kind":"session_feedback",
+    "session_id":"demo-session-001",
+    "task":"review this patch for regressions",
+    "status":"failure",
+    "score":0.3,
+    "comment":"missed postgres migration issues",
+    "selected_skill_ids":["code_review"],
+    "missing_capabilities":["database migrations"]
+  }'
+```
+
+## Runtime Event Schema
+
+The runtime ingest path accepts a single JSON object, a JSON array, or an envelope shaped like `{"events":[...]}`.
+
+Each event uses a conservative `v1.1` schema:
+
+- required fields for all events: `schema_version` (defaults to `1.1`), `source`, `event_kind`, `session_id`, `task`
+- `event_kind` is limited to `session_started` or `session_feedback`
+- `session_feedback` also requires `status` and `score`
+- `status` is limited to `success`, `failure`, `partial`, `cancelled`, or `unknown`
+- optional fields: `event_id`, `occurred_at`, `comment`, `steps`, `selected_skill_ids`, `missing_capabilities`, `metadata`
+
+Ingested events are appended to the same local JSONL ledger as routed sessions and direct feedback. Only `session_feedback` events are projected into the evolution pipeline, so operator review remains in control.
+
 ## Evaluation Gate
 
 The gate is intentionally conservative:
@@ -177,7 +229,7 @@ The gate is intentionally conservative:
 - scaffolded workflow and capability proposals are always marked `manual_review`
 - promotion applies only proposals that passed the gate
 
-This prevents v1 from blindly rewriting skills based on weak evidence.
+This prevents v1.1 from blindly rewriting skills based on weak evidence.
 
 ## Tests
 
@@ -189,8 +241,9 @@ Current coverage focuses on:
 
 - config path resolution
 - skill retrieval relevance
-- proposal generation, gate status, and approved promotion behavior
+- CLI and HTTP runtime ingest behavior
+- proposal generation, mixed feedback/runtime-event pipeline behavior, and approved promotion behavior
 
 ## Status
 
-V1 is now a runnable local scaffold for governed evolution. It is intended as the integration point for later Atlas/OpenClaw work, not as a finished self-improving agent system.
+V1.1 is a runnable local scaffold for governed evolution with a more realistic local integration surface for Atlas/OpenClaw-style runtimes. It is still an operator-governed local system, not a finished self-improving agent.

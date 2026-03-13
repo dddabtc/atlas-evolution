@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import sys
 from atlas_evolution.config import load_config, write_default_config
 from atlas_evolution.models import EvolutionReport
 from atlas_evolution.runtime.orchestrator import AtlasOrchestrator
@@ -37,6 +39,16 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_parser.add_argument("--skill", action="append", default=[])
     feedback_parser.add_argument("--missing-capability", action="append", default=[])
     feedback_parser.add_argument("--metadata", action="append", default=[], help="key=value pairs")
+
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help="Ingest external runtime session events from JSON.",
+    )
+    ingest_parser.add_argument("--config", default="demo/atlas.toml")
+    ingest_parser.add_argument(
+        "--file",
+        help="Read JSON from a file. If omitted, JSON is read from stdin.",
+    )
 
     evolve_parser = subparsers.add_parser("evolve", help="Generate and gate evolution proposals.")
     evolve_parser.add_argument("--config", default="demo/atlas.toml")
@@ -99,6 +111,32 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_ingest_payload(file_path: str | None) -> object:
+    if file_path:
+        return json.loads(Path(file_path).read_text(encoding="utf-8"))
+    return json.loads(sys.stdin.read() or "{}")
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    orchestrator = AtlasOrchestrator.from_config_path(args.config)
+    try:
+        payload = _read_ingest_payload(args.file)
+        events = orchestrator.ingest_runtime_events(payload)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"Invalid ingest payload: {error}") from error
+    print(
+        json.dumps(
+            {
+                "status": "recorded",
+                "ingested": len(events),
+                "events": [event.to_dict() for event in events],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_evolve(args: argparse.Namespace) -> int:
     orchestrator = AtlasOrchestrator.from_config_path(args.config)
     report, path = orchestrator.pipeline.run()
@@ -137,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         "skills": cmd_skills,
         "route": cmd_route,
         "feedback": cmd_feedback,
+        "ingest": cmd_ingest,
         "evolve": cmd_evolve,
         "promote": cmd_promote,
         "serve": cmd_serve,

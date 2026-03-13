@@ -1,0 +1,26 @@
+{
+  "events": [
+    {
+      "schema_version": "1.1",
+      "source": "openclaw-local",
+      "event_kind": "session_started",
+      "session_id": "demo-session-001",
+      "task": "review postgres migration rollback safety"
+    },
+    {
+      "schema_version": "1.1",
+      "source": "openclaw-local",
+      "event_kind": "session_feedback",
+      "session_id": "demo-session-001",
+      "task": "review postgres migration rollback safety",
+      "status": "failure",
+      "score": 0.2,
+      "comment": "missed rollback coverage",
+      "selected_skill_ids": ["code_review"],
+      "missing_capabilities": ["database migrations"],
+      "metadata": {
+        "operator": "local-demo"
+      }
+    }
+  ]
+}

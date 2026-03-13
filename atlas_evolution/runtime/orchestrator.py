@@ -6,6 +6,7 @@ import uuid
 from atlas_evolution.config import AtlasConfig, load_config
 from atlas_evolution.feedback_store import FeedbackStore
 from atlas_evolution.models import FeedbackRecord
+from atlas_evolution.runtime_events import RuntimeSessionEvent, parse_runtime_session_events
 from atlas_evolution.skill_bank import SkillBank
 
 from atlas_evolution.evolution.pipeline import EvolutionPipeline
@@ -71,3 +72,9 @@ class AtlasOrchestrator:
         )
         self.feedback_store.log_feedback(record)
         return record
+
+    def ingest_runtime_events(self, payload: object) -> list[RuntimeSessionEvent]:
+        events = parse_runtime_session_events(payload)
+        for event in events:
+            self.feedback_store.log_runtime_event(event)
+        return events
