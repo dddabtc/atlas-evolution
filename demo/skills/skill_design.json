@@ -1,0 +1,21 @@
+{
+  "id": "skill_design",
+  "name": "Skill Design",
+  "description": "Design or refine local agent skills, instructions, and retrieval descriptions.",
+  "tags": [
+    "skills",
+    "prompts",
+    "design"
+  ],
+  "examples": [
+    "create a skill for release notes generation",
+    "improve a skill description for better routing"
+  ],
+  "instructions": [
+    "Keep the skill focused on a single repeatable workflow",
+    "Write examples that are easy for retrieval to match"
+  ],
+  "metadata": {
+    "owner": "atlas-evolution-demo"
+  }
+}

@@ -1,100 +1,196 @@
-# Atlas Evolution — Self-Evolving Agent System
+# Atlas Evolution
 
 [🇨🇳 中文文档](README_zh.md)
 
-**Subsystem 6 of [Atlas](https://github.com/dddabtc/atlas)**
+Atlas Evolution v1 is a local, governed evolution layer for Atlas/OpenClaw-like agents.
 
-A self-evolving system that enables AI agents to autonomously improve their capabilities, memory, prompts, and workflows through feedback loops, reinforcement, and evolutionary optimization.
+It does **not** claim autonomous self-improvement is solved. This repo ships a practical product skeleton that can be run and demoed locally:
 
-## Vision
+- local config and CLI
+- skill loading and retrieval
+- feedback and event logging
+- post-session evolution proposal generation
+- an evaluation gate before promotion
+- a minimal HTTP proxy/orchestration surface
 
-Traditional AI agents are static — they execute predefined workflows and rely on human intervention for improvement. Atlas Evolution makes agents that **get better on their own** by:
+V1 deliberately excludes online RL, OPD, cloud training, and blind self-modification.
 
-- **Memory Evolution**: Learning which memories are useful and optimizing recall
-- **Prompt Evolution**: Automatically refining triggers, routing rules, and skill descriptions
-- **Workflow Evolution**: Discovering and optimizing multi-step task patterns
-- **Capability Evolution**: Self-assessing gaps and acquiring new tools/skills
+## What v1 actually does
+
+Atlas Evolution sits beside an agent runtime instead of replacing it.
+
+1. A task comes in through the CLI or local proxy.
+2. The orchestrator retrieves the most relevant local skills.
+3. Atlas Evolution returns a prompt bundle for the downstream agent and logs the session start.
+4. After the run, the operator records feedback, score, steps, and missing capabilities.
+5. The evolution pipeline analyzes the feedback log and produces reviewable proposals.
+6. The evaluation gate approves only supported prompt-metadata changes; scaffolded proposal types stay manual-review only.
+
+That makes v1 a **governed evolution pipeline**, not an autonomous learning system.
 
 ## Architecture
 
+```text
+atlas_evolution/
+  cli.py                 # Local CLI entrypoint
+  config.py              # TOML config loader
+  models.py              # Shared dataclasses
+  skill_bank.py          # Skill loading + keyword retrieval
+  feedback_store.py      # Append-only JSONL event store
+  evolution/
+    prompt_evolver.py    # Heuristic prompt/skill metadata proposals
+    workflow_discoverer.py
+    capability_assessor.py
+    evaluator.py         # Offline evaluation gate
+    pipeline.py          # Proposal generation + promotion logic
+  runtime/
+    orchestrator.py      # Ties config, retrieval, feedback, evolution together
+    proxy.py             # Minimal local HTTP server
+tests/
+demo/
+  atlas.toml             # Runnable demo config
+  skills/*.json          # Seed skill bank
+  state/                 # Local event/report output
 ```
-┌─────────────────────────────────────────┐
-│           Atlas Evolution               │
-├─────────────┬───────────────────────────┤
-│  Feedback   │  Evolution Engine         │
-│  Collector  │  ├─ Memory Optimizer      │
-│             │  ├─ Prompt Evolver        │
-│  ┌────────┐ │  ├─ Workflow Discoverer   │
-│  │Observe │ │  └─ Capability Assessor   │
-│  │ Score  │ │                           │
-│  │ Store  │ │  Evaluation               │
-│  └────────┘ │  ├─ A/B Testing           │
-│             │  ├─ Regression Detection   │
-│             │  └─ Safety Constraints     │
-└─────────────┴───────────────────────────┘
+
+## Honest scope
+
+Implemented in v1:
+
+- local TOML config loading
+- skill manifests from JSON
+- deterministic local retrieval
+- append-only event and feedback storage
+- heuristic prompt-update proposals
+- heuristic workflow and capability proposals
+- offline evaluation gate
+- explicit promotion step for approved prompt updates
+- local HTTP endpoints for route and feedback
+
+Scaffolded in v1:
+
+- `workflow_discoverer.py`: advisory workflow candidates only
+- `capability_assessor.py`: advisory capability-gap suggestions only
+- evaluation is offline and heuristic, not benchmark-backed
+- no LLM calls are made by this repo
+- no automatic deployment into Atlas/OpenClaw yet
+
+## Quick Start
+
+Requires Python 3.11+.
+
+```bash
+python3 -m atlas_evolution.cli skills --config demo/atlas.toml list
 ```
 
-## Core Components
+Installation is optional for local demos because the repo can be run directly with `python3 -m ...`.
 
-### 1. Feedback Collector
-Captures signals from agent operations:
-- Memory recall hit/miss rates
-- Task success/failure outcomes  
-- User satisfaction signals (explicit and implicit)
-- Routing accuracy (did the right skill trigger?)
+If you want an editable install in an offline environment, use an environment that already has `setuptools` available and run:
 
-### 2. Evolution Engine
+```bash
+pip install -e . --no-build-isolation
+```
 
-#### Memory Optimizer
-- Track which memories get recalled and actually used vs ignored
-- Adjust memory weights, consolidation priorities
-- Prune low-value memories, reinforce high-value ones
+List the demo skills:
 
-#### Prompt Evolver  
-- Monitor skill trigger accuracy
-- Evolve routing rules based on misfire patterns
-- Optimize skill descriptions for better semantic matching
-- Inspired by: EvoPrompt, Promptbreeder, TextGrad
+```bash
+python3 -m atlas_evolution.cli skills --config demo/atlas.toml list
+```
 
-#### Workflow Discoverer
-- Detect recurring multi-step patterns in agent behavior
-- Package successful patterns as reusable workflows
-- Eliminate redundant steps automatically
+Route a task and get a prompt bundle:
 
-#### Capability Assessor
-- Self-assess what the agent can and cannot do
-- Identify capability gaps from failed tasks
-- Recommend new tools/skills to acquire
+```bash
+python3 -m atlas_evolution.cli route \
+  --config demo/atlas.toml \
+  --task "review this patch for regressions"
+```
 
-### 3. Evaluation Framework
-- A/B test evolved vs original configurations
-- Detect regressions before deploying changes
-- Safety constraints: never evolve away safety rules
+Record feedback after the downstream agent run:
 
-## Key References
+```bash
+python3 -m atlas_evolution.cli feedback \
+  --config demo/atlas.toml \
+  --session-id "<session-id>" \
+  --task "review this patch for regressions" \
+  --status failure \
+  --score 0.3 \
+  --comment "missed postgres migration issues" \
+  --skill code_review \
+  --missing-capability "database migrations"
+```
 
-- [Absolute Zero](https://arxiv.org/abs/2505.03335) — Reinforced Self-play Reasoning with Zero Data
-- [R-Zero](https://arxiv.org/abs/2508.05004) — Self-Evolving Reasoning LLM from Zero Data
-- [EvoPrompt](https://arxiv.org/abs/2309.08532) — Connecting LLMs with Evolutionary Algorithms
-- [TextGrad](https://arxiv.org/abs/2406.07496) — Automatic Differentiation via Text
-- [Promptbreeder](https://arxiv.org/abs/2309.16797) — Self-Referential Self-Improvement
-- [EvoAgentX Survey](https://github.com/EvoAgentX/Awesome-Self-Evolving-Agents) — Comprehensive Survey
+Generate proposals and gate them:
+
+```bash
+python3 -m atlas_evolution.cli evolve --config demo/atlas.toml
+```
+
+Apply only approved prompt updates:
+
+```bash
+python3 -m atlas_evolution.cli promote --config demo/atlas.toml
+```
+
+## Local Proxy
+
+Start the local server:
+
+```bash
+python3 -m atlas_evolution.cli serve --config demo/atlas.toml
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8765/health
+```
+
+Route request:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/route \
+  -H "Content-Type: application/json" \
+  -d '{"task":"review this patch for regressions"}'
+```
+
+Feedback request:
+
+```bash
+curl -X POST http://127.0.0.1:8765/v1/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id":"<session-id>",
+    "task":"review this patch for regressions",
+    "status":"failure",
+    "score":0.3,
+    "comment":"missed postgres migration issues",
+    "selected_skill_ids":["code_review"],
+    "missing_capabilities":["database migrations"]
+  }'
+```
+
+## Evaluation Gate
+
+The gate is intentionally conservative:
+
+- prompt updates need enough evidence and confidence to be approved
+- scaffolded workflow and capability proposals are always marked `manual_review`
+- promotion applies only proposals that passed the gate
+
+This prevents v1 from blindly rewriting skills based on weak evidence.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Current coverage focuses on:
+
+- config path resolution
+- skill retrieval relevance
+- proposal generation, gate status, and approved promotion behavior
 
 ## Status
 
-🚧 **Phase: Design & Research** (0%)
-
-## Related Atlas Subsystems
-
-| # | Subsystem | Repo | Status |
-|---|-----------|------|--------|
-| 1 | Memory System | atlas (core) | 80% |
-| 2 | Capability System | atlas (core) | 70% |
-| 3 | Roundtable Decision | atlas (core) | 90% |
-| 4 | Innovation System | atlas (core) | 20% |
-| 5 | Collaborative Orchestration | atlas (core) | 10% |
-| **6** | **Self-Evolution** | **atlas-evolution** | **0%** |
-
-## License
-
-Private — Part of Atlas project.
+V1 is now a runnable local scaffold for governed evolution. It is intended as the integration point for later Atlas/OpenClaw work, not as a finished self-improving agent system.
