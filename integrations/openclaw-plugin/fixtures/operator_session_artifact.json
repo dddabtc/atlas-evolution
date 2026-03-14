@@ -1,0 +1,49 @@
+{
+  "artifact_kind": "openclaw_operator_session",
+  "schema_version": "1.0",
+  "source": "openclaw-local",
+  "recorded_at": "2026-03-13T18:30:00+00:00",
+  "session": {
+    "session_id": "plugin-demo-openclaw-session-001",
+    "task": "review postgres migration rollback safety",
+    "started_at": "2026-03-13T18:20:00+00:00",
+    "operator": "openclaw-plugin-v0.1",
+    "selected_skill_ids": [
+      "code_review"
+    ]
+  },
+  "timeline": [
+    {
+      "checkpoint_id": "cp-collect",
+      "occurred_at": "2026-03-13T18:22:00+00:00",
+      "step": "collect migration files",
+      "status": "completed"
+    },
+    {
+      "checkpoint_id": "cp-risk",
+      "occurred_at": "2026-03-13T18:24:00+00:00",
+      "step": "inspect rollback risk",
+      "status": "blocked",
+      "notes": "lock-time estimate missing",
+      "missing_capabilities": [
+        "database migrations"
+      ]
+    }
+  ],
+  "outcome": {
+    "occurred_at": "2026-03-13T18:28:00+00:00",
+    "status": "failure",
+    "score": 0.2,
+    "comment": "missed rollback coverage",
+    "missing_capabilities": [
+      "database migrations"
+    ]
+  },
+  "handoff": {
+    "summary": "Paused after rollback risk inspection.",
+    "next_action": "Verify lock-time risk before promotion."
+  },
+  "metadata": {
+    "transport": "openclaw-plugin-v0.1"
+  }
+}

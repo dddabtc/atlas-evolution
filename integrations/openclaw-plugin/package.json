@@ -1,0 +1,19 @@
+{
+  "name": "@atlas-evolution/openclaw-plugin",
+  "version": "0.1.0",
+  "description": "Official OpenClaw export, spool, and transport plugin for Atlas Evolution",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  },
+  "exports": {
+    ".": "./index.js",
+    "./helpers": "./src/contracts.js"
+  },
+  "scripts": {
+    "verify:fixtures": "python3 ./scripts/verify_payloads.py"
+  }
+}

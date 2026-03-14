@@ -77,6 +77,7 @@ Do **not** pick this expecting:
 - `openclaw-import` for realistic OpenClaw operator session artifacts
 - report output that surfaces OpenClaw handoff context
 - replayable operator handoff bundles
+- official in-repo OpenClaw plugin package for export / spool / transport
 
 ### Governance and operator control
 - proposal generation with conservative gate logic
@@ -180,6 +181,26 @@ atlas_evolution/
     orchestrator.py      # Runtime/evolution glue
     proxy.py             # Minimal local HTTP server
     report_adapter.py    # Operator evidence bundle adapter
+integrations/
+  openclaw-plugin/       # Official OpenClaw plugin package for Atlas export/spool/transport
+
+## Official OpenClaw plugin v0.1
+
+Atlas Evolution now includes its first official OpenClaw integration package at `integrations/openclaw-plugin`.
+
+The boundary is deliberate:
+- **Atlas Evolution remains the control plane**
+- the OpenClaw plugin stays thin and only handles export, spool, and transport
+- no LLM calls, cloud loops, or self-modifying behavior live inside the plugin
+
+The plugin exposes:
+- `openclaw atlas-export ...` CLI commands
+- `atlasEvolution.export` and `atlasEvolution.status` Gateway RPC methods
+- `/atlas-evolution/export` and `/atlas-evolution/status` plugin HTTP routes
+- append-only JSONL spool files for runtime events, operator-session artifacts, support capture, and delivery attempts
+
+Runtime-event payloads can POST directly into Atlas Evolution's local `/v1/ingest`.
+`openclaw_operator_session` artifacts stay spooled in v0.1 and are replayed through `python3 -m atlas_evolution.cli openclaw-import`, because Atlas' local HTTP surface does not expose that richer import path yet.
 ```
 
 ## Honest scope
@@ -212,6 +233,7 @@ atlas_evolution/
 - [`docs/v1_1_milestone.md`](docs/v1_1_milestone.md) — what v1.1 ships and why it matters
 - [`docs/v1_2_productization_roadmap.md`](docs/v1_2_productization_roadmap.md) — next productization slice
 - [`docs/openclaw_atlas_contract.md`](docs/openclaw_atlas_contract.md) — formal OpenClaw/Atlas contract
+- [`docs/openclaw_plugin_integration.md`](docs/openclaw_plugin_integration.md) — official OpenClaw plugin transport/export workflow
 - [`docs/operator_review_workflow.md`](docs/operator_review_workflow.md) — review / promotion workflow
 - [`CHANGELOG.md`](CHANGELOG.md) — versioned project history
 

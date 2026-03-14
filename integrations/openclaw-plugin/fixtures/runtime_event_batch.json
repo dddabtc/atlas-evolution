@@ -1,0 +1,52 @@
+{
+  "contract_name": "openclaw_atlas.runtime_event",
+  "contract_version": "1.0",
+  "source": "openclaw-local",
+  "metadata": {
+    "operator": "openclaw-plugin-v0.1"
+  },
+  "events": [
+    {
+      "schema_version": "1.1",
+      "event_id": "0cced53c-d8a7-4e60-b62d-b8fa8f1fdafc",
+      "event_kind": "session_started",
+      "occurred_at": "2026-03-13T18:20:00+00:00",
+      "session_id": "plugin-demo-session-001",
+      "task": "review postgres migration rollback safety",
+      "steps": [
+        "collect migration files",
+        "inspect rollback path"
+      ],
+      "selected_skill_ids": [
+        "code_review"
+      ],
+      "metadata": {
+        "transport": "openclaw-plugin-v0.1"
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "event_id": "9b260cf9-42ee-4b5f-92e1-878a2195ec95",
+      "event_kind": "session_feedback",
+      "occurred_at": "2026-03-13T18:28:00+00:00",
+      "session_id": "plugin-demo-session-001",
+      "task": "review postgres migration rollback safety",
+      "status": "failure",
+      "score": 0.2,
+      "comment": "missed rollback coverage",
+      "steps": [
+        "collect migration files",
+        "inspect rollback path"
+      ],
+      "selected_skill_ids": [
+        "code_review"
+      ],
+      "missing_capabilities": [
+        "database migrations"
+      ],
+      "metadata": {
+        "transport": "openclaw-plugin-v0.1"
+      }
+    }
+  ]
+}

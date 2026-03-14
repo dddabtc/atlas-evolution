@@ -1,0 +1,91 @@
+{
+  "id": "atlas-evolution",
+  "name": "Atlas Evolution",
+  "description": "Thin OpenClaw export, spool, and transport bridge for Atlas Evolution runtime events and operator-session artifacts.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "baseUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:8765"
+      },
+      "apiKey": {
+        "type": "string"
+      },
+      "spoolDir": {
+        "type": "string",
+        "default": ".openclaw/atlas-evolution-spool"
+      },
+      "retry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxAttempts": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 3
+          },
+          "backoffMs": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 250
+          },
+          "maxBackoffMs": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 2000
+          }
+        }
+      },
+      "includeTranscript": {
+        "type": "boolean",
+        "default": false
+      },
+      "includeToolCalls": {
+        "type": "string",
+        "enum": [
+          "none",
+          "summary",
+          "full"
+        ],
+        "default": "summary"
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enabled",
+      "help": "Plugin-local switch for Atlas Evolution export and support capture surfaces."
+    },
+    "baseUrl": {
+      "label": "Atlas Base URL",
+      "help": "Atlas Evolution local HTTP base URL. Runtime-event payloads post to /v1/ingest when this is set."
+    },
+    "apiKey": {
+      "label": "Atlas API Key",
+      "help": "Optional bearer/API-key header added to plugin HTTP exports and Atlas POST attempts.",
+      "sensitive": true
+    },
+    "spoolDir": {
+      "label": "Spool Directory",
+      "help": "Directory for append-only JSONL export ledgers and delivery-attempt logs."
+    },
+    "retry": {
+      "label": "Retry Settings",
+      "help": "Deterministic retry policy for optional POST delivery to Atlas Evolution."
+    },
+    "includeTranscript": {
+      "label": "Include Transcript",
+      "help": "When false, support capture stores hashes/lengths instead of raw text bodies."
+    },
+    "includeToolCalls": {
+      "label": "Include Tool Calls",
+      "help": "Default is summary-only. Full tool-result persistence is opt-in."
+    }
+  }
+}
