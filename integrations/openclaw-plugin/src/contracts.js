@@ -7,6 +7,15 @@ export const OPENCLAW_ATLAS_CONTRACT_VERSION = "1.0";
 export const OPENCLAW_ATLAS_EVENT_SCHEMA_VERSION = "1.1";
 export const OPENCLAW_OPERATOR_SESSION_ARTIFACT_KIND = "openclaw_operator_session";
 export const OPENCLAW_OPERATOR_SESSION_SCHEMA_VERSION = "1.0";
+const ALLOWED_FEEDBACK_STATUSES = new Set(["success", "failure", "partial", "cancelled", "unknown"]);
+const ALLOWED_CHECKPOINT_STATUSES = new Set([
+  "blocked",
+  "cancelled",
+  "completed",
+  "handoff",
+  "in_progress",
+  "queued",
+]);
 
 function uuid() {
   return crypto.randomUUID();
@@ -25,6 +34,38 @@ function optionalString(value) {
   }
   const normalized = value.trim();
   return normalized || undefined;
+}
+
+function validateTimestamp(value, fieldName) {
+  if (Number.isNaN(Date.parse(value))) {
+    throw new Error(`${fieldName} must be an ISO 8601 timestamp`);
+  }
+  return value;
+}
+
+function requiredTimestamp(value, fieldName) {
+  return validateTimestamp(requiredString(value, fieldName), fieldName);
+}
+
+function optionalTimestamp(value, fieldName) {
+  const normalized = optionalString(value);
+  return normalized === undefined ? undefined : validateTimestamp(normalized, fieldName);
+}
+
+function requiredEnumString(value, fieldName, allowed) {
+  const normalized = requiredString(value, fieldName);
+  if (!allowed.has(normalized)) {
+    throw new Error(`${fieldName} must be one of: ${Array.from(allowed).join(", ")}`);
+  }
+  return normalized;
+}
+
+function requiredScore(value, fieldName = "score") {
+  const score = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(score) || score < 0 || score > 1) {
+    throw new Error(`${fieldName} must be a number between 0.0 and 1.0`);
+  }
+  return score;
 }
 
 function stringList(value) {
@@ -48,9 +89,9 @@ function timelineList(value) {
 function normalizeCheckpoint(input) {
   return stripUndefined({
     checkpoint_id: requiredString(input.checkpoint_id ?? input.checkpointId, "checkpoint_id"),
-    occurred_at: requiredString(input.occurred_at ?? input.occurredAt, "occurred_at"),
+    occurred_at: requiredTimestamp(input.occurred_at ?? input.occurredAt, "occurred_at"),
     step: requiredString(input.step, "step"),
-    status: requiredString(input.status, "status"),
+    status: requiredEnumString(input.status, "status", ALLOWED_CHECKPOINT_STATUSES),
     notes: optionalString(input.notes),
     selected_skill_ids: stringList(input.selected_skill_ids ?? input.selectedSkillIds),
     missing_capabilities: stringList(input.missing_capabilities ?? input.missingCapabilities),
@@ -62,11 +103,10 @@ function normalizeOutcome(input) {
   if (!isPlainObject(input)) {
     return undefined;
   }
-  const score = typeof input.score === "number" ? input.score : Number(input.score);
   return stripUndefined({
-    occurred_at: requiredString(input.occurred_at ?? input.occurredAt, "outcome.occurred_at"),
-    status: requiredString(input.status, "outcome.status"),
-    score: Number.isFinite(score) ? score : 0,
+    occurred_at: requiredTimestamp(input.occurred_at ?? input.occurredAt, "outcome.occurred_at"),
+    status: requiredEnumString(input.status, "outcome.status", ALLOWED_FEEDBACK_STATUSES),
+    score: requiredScore(input.score, "outcome.score"),
     comment: optionalString(input.comment),
     selected_skill_ids: stringList(input.selected_skill_ids ?? input.selectedSkillIds),
     missing_capabilities: stringList(input.missing_capabilities ?? input.missingCapabilities),
@@ -97,7 +137,7 @@ function buildEnvelope(event, input = {}) {
     contract_name: OPENCLAW_ATLAS_CONTRACT_NAME,
     contract_version: OPENCLAW_ATLAS_CONTRACT_VERSION,
     envelope_id: optionalString(input.envelopeId ?? input.envelope_id) ?? uuid(),
-    recorded_at: optionalString(input.recordedAt ?? input.recorded_at) ?? utcNow(),
+    recorded_at: optionalTimestamp(input.recordedAt ?? input.recorded_at, "recorded_at") ?? utcNow(),
     source: optionalString(input.source) ?? "openclaw-local",
     metadata: envelopeMetadata,
     event,
@@ -109,7 +149,7 @@ function buildSessionStartedEvent(input) {
     schema_version: OPENCLAW_ATLAS_EVENT_SCHEMA_VERSION,
     event_id: optionalString(input.eventId ?? input.event_id) ?? uuid(),
     event_kind: "session_started",
-    occurred_at: optionalString(input.occurredAt ?? input.occurred_at) ?? utcNow(),
+    occurred_at: optionalTimestamp(input.occurredAt ?? input.occurred_at, "occurred_at") ?? utcNow(),
     session_id: requiredString(input.sessionId ?? input.session_id, "session_id"),
     task: requiredString(input.task, "task"),
     steps: stringList(input.steps),
@@ -120,19 +160,15 @@ function buildSessionStartedEvent(input) {
 }
 
 function buildSessionFeedbackEvent(input) {
-  const score = typeof input.score === "number" ? input.score : Number(input.score);
-  if (!Number.isFinite(score)) {
-    throw new Error("score is required");
-  }
   return stripUndefined({
     schema_version: OPENCLAW_ATLAS_EVENT_SCHEMA_VERSION,
     event_id: optionalString(input.eventId ?? input.event_id) ?? uuid(),
     event_kind: "session_feedback",
-    occurred_at: optionalString(input.occurredAt ?? input.occurred_at) ?? utcNow(),
+    occurred_at: optionalTimestamp(input.occurredAt ?? input.occurred_at, "occurred_at") ?? utcNow(),
     session_id: requiredString(input.sessionId ?? input.session_id, "session_id"),
     task: requiredString(input.task, "task"),
-    status: requiredString(input.status, "status"),
-    score,
+    status: requiredEnumString(input.status, "status", ALLOWED_FEEDBACK_STATUSES),
+    score: requiredScore(input.score),
     comment: optionalString(input.comment),
     steps: stringList(input.steps),
     selected_skill_ids: stringList(input.selected_skill_ids ?? input.selectedSkillIds),
@@ -181,11 +217,11 @@ export function buildOperatorSessionArtifact(input) {
     artifact_kind: OPENCLAW_OPERATOR_SESSION_ARTIFACT_KIND,
     schema_version: OPENCLAW_OPERATOR_SESSION_SCHEMA_VERSION,
     source: optionalString(input.source) ?? "openclaw-local",
-    recorded_at: optionalString(input.recordedAt ?? input.recorded_at) ?? utcNow(),
+    recorded_at: optionalTimestamp(input.recordedAt ?? input.recorded_at, "recorded_at") ?? utcNow(),
     session: {
       session_id: requiredString(input.sessionId ?? input.session_id, "session_id"),
       task: requiredString(input.task, "task"),
-      started_at: requiredString(input.startedAt ?? input.started_at, "started_at"),
+      started_at: requiredTimestamp(input.startedAt ?? input.started_at, "started_at"),
       operator: optionalString(input.operator),
       selected_skill_ids: stringList(input.selected_skill_ids ?? input.selectedSkillIds),
       missing_capabilities: stringList(input.missing_capabilities ?? input.missingCapabilities),

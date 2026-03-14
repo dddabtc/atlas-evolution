@@ -201,6 +201,14 @@ The plugin exposes:
 
 Runtime-event payloads can POST directly into Atlas Evolution's local `/v1/ingest`.
 `openclaw_operator_session` artifacts stay spooled in v0.1 and are replayed through `python3 -m atlas_evolution.cli openclaw-import`, because Atlas' local HTTP surface does not expose that richer import path yet.
+
+Local plugin verification is dependency-light:
+
+```bash
+cd integrations/openclaw-plugin
+npm test
+npm run verify:fixtures
+npm run pack:dry-run
 ```
 
 ## Honest scope

@@ -16,6 +16,7 @@ class OpenClawPluginIntegrationTests(unittest.TestCase):
     def test_plugin_manifest_exposes_required_config_fields(self) -> None:
         manifest = json.loads((PLUGIN_DIR / "openclaw.plugin.json").read_text(encoding="utf-8"))
         properties = manifest["configSchema"]["properties"]
+        package = json.loads((PLUGIN_DIR / "package.json").read_text(encoding="utf-8"))
 
         self.assertEqual(manifest["id"], "atlas-evolution")
         self.assertEqual(properties["enabled"]["default"], True)
@@ -25,6 +26,11 @@ class OpenClawPluginIntegrationTests(unittest.TestCase):
         self.assertEqual(properties["includeToolCalls"]["default"], "summary")
         self.assertNotIn("required", manifest["configSchema"])
         self.assertEqual(properties["retry"]["properties"]["maxAttempts"]["default"], 3)
+        self.assertEqual(package["main"], "./index.js")
+        self.assertEqual(package["engines"]["node"], ">=18")
+        self.assertIn("test", package["scripts"])
+        self.assertIn("pack:dry-run", package["scripts"])
+        self.assertIn("openclaw.plugin.json", package["files"])
 
     def test_runtime_event_fixture_matches_atlas_contract(self) -> None:
         payload = json.loads((PLUGIN_DIR / "fixtures" / "runtime_event_batch.json").read_text(encoding="utf-8"))

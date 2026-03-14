@@ -26,6 +26,19 @@ It does **not** try to replace Atlas Evolution as the control plane, infer missi
   - `support-capture.jsonl`
   - `delivery-attempts.jsonl`
 
+## Local package workflow
+
+The package has no build step and no runtime npm dependencies. From the plugin directory you can validate it directly:
+
+```bash
+cd integrations/openclaw-plugin
+npm test
+npm run verify:fixtures
+npm run pack:dry-run
+```
+
+`enabled: false` is a hard off switch for export surfaces and support-capture hooks. The status route, Gateway status method, and `/atlas-export-status` command still report spool state so operators can confirm the plugin is intentionally disabled.
+
 ## Honest limitation
 
 The referenced OpenClaw docs clearly document plugin routes, commands, CLI, Gateway RPC, and message/compaction hook surfaces.
@@ -218,6 +231,15 @@ Example Atlas-compatible payloads live in:
 - `fixtures/operator_session_artifact.json`
 
 Verify them locally:
+
+```bash
+cd integrations/openclaw-plugin
+npm test
+npm run verify:fixtures
+npm run pack:dry-run
+```
+
+Or from the repo root:
 
 ```bash
 python3 integrations/openclaw-plugin/scripts/verify_payloads.py

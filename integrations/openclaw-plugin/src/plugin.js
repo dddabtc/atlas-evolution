@@ -87,12 +87,19 @@ function formatStatusText(status) {
   ].join("\n");
 }
 
-async function dispatchRequest(transport, request, options = {}) {
+function assertPluginEnabled(config) {
+  if (!config.enabled) {
+    throw new Error("atlas-evolution plugin is disabled; re-enable it to export payloads");
+  }
+}
+
+async function dispatchRequest(transport, config, request, options = {}) {
+  assertPluginEnabled(config);
   const payload = buildPayloadFromRequest(request);
   return await transport.dispatchPayload(payload, options);
 }
 
-function registerCliSurface(api, transport) {
+function registerCliSurface(api, transport, config) {
   api.registerCli(
     ({ program }) => {
       const atlas = program.command("atlas-export").description("Export Atlas Evolution payloads from OpenClaw");
@@ -106,7 +113,7 @@ function registerCliSurface(api, transport) {
         .option("--no-post", "spool only; skip Atlas HTTP POST")
         .action(async (file, options) => {
           const request = await readJsonFile(file);
-          const result = await dispatchRequest(transport, request, { post: options.post });
+          const result = await dispatchRequest(transport, config, request, { post: options.post });
           console.log(JSON.stringify(result, null, 2));
         });
 
@@ -125,6 +132,7 @@ function registerCliSurface(api, transport) {
         .action(async (options) => {
           const result = await dispatchRequest(
             transport,
+            config,
             {
               kind: "session_started",
               sessionId: options.sessionId,
@@ -160,6 +168,7 @@ function registerCliSurface(api, transport) {
         .action(async (options) => {
           const result = await dispatchRequest(
             transport,
+            config,
             {
               kind: "session_feedback",
               sessionId: options.sessionId,
@@ -200,6 +209,7 @@ function registerCliSurface(api, transport) {
           const handoff = options.handoffFile ? await readJsonFile(options.handoffFile) : undefined;
           const result = await dispatchRequest(
             transport,
+            config,
             {
               kind: "operator_session",
               sessionId: options.sessionId,
@@ -241,7 +251,7 @@ function registerRouteSurface(api, transport, config) {
       try {
         const request = await readJsonBody(req);
         const post = request?.post !== false;
-        const result = await dispatchRequest(transport, request, { post });
+        const result = await dispatchRequest(transport, config, request, { post });
         writeJson(res, 200, stripUndefined({ ok: true, ...result }));
       } catch (error) {
         writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -269,14 +279,14 @@ function registerRouteSurface(api, transport, config) {
   });
 }
 
-function registerGatewaySurface(api, transport) {
+function registerGatewaySurface(api, transport, config) {
   api.registerGatewayMethod("atlasEvolution.status", ({ respond }) => {
     respond(true, transport.getStatus());
   });
 
   api.registerGatewayMethod("atlasEvolution.export", async ({ params, respond }) => {
     try {
-      const result = await dispatchRequest(transport, params ?? {}, { post: params?.post !== false });
+      const result = await dispatchRequest(transport, config, params ?? {}, { post: params?.post !== false });
       respond(true, result);
     } catch (error) {
       respond(false, { error: error instanceof Error ? error.message : String(error) });
@@ -300,9 +310,9 @@ export default function registerAtlasEvolutionPlugin(api) {
   const transport = createTransport(api, config);
 
   registerCommandSurface(api, transport);
-  registerGatewaySurface(api, transport);
+  registerGatewaySurface(api, transport, config);
   registerRouteSurface(api, transport, config);
-  registerCliSurface(api, transport);
+  registerCliSurface(api, transport, config);
 
   if (config.enabled) {
     registerSupportHooks(api, transport, config);

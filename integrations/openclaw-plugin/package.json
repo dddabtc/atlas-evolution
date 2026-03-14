@@ -4,6 +4,7 @@
   "description": "Official OpenClaw export, spool, and transport plugin for Atlas Evolution",
   "private": true,
   "type": "module",
+  "main": "./index.js",
   "openclaw": {
     "extensions": [
       "./index.js"
@@ -13,7 +14,29 @@
     ".": "./index.js",
     "./helpers": "./src/contracts.js"
   },
+  "files": [
+    "README.md",
+    "fixtures",
+    "index.js",
+    "openclaw.plugin.json",
+    "scripts",
+    "src",
+    "test"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "atlas-evolution",
+    "openclaw",
+    "plugin",
+    "runtime-events",
+    "operator-session"
+  ],
   "scripts": {
-    "verify:fixtures": "python3 ./scripts/verify_payloads.py"
+    "test": "node --test ./test/*.test.js",
+    "verify:fixtures": "python3 ./scripts/verify_payloads.py",
+    "verify": "npm run test && npm run verify:fixtures",
+    "pack:dry-run": "npm_config_cache=./.npm-cache npm pack --dry-run"
   }
 }

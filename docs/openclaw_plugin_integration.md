@@ -22,6 +22,15 @@ The OpenClaw plugin only handles:
 - optional POST of runtime-event payloads to Atlas Evolution's local `/v1/ingest`
 - lightweight support capture from documented plugin hooks
 
+The package is intentionally dependency-free at runtime and can be verified from its own directory with:
+
+```bash
+cd integrations/openclaw-plugin
+npm test
+npm run verify:fixtures
+npm run pack:dry-run
+```
+
 ## Why the plugin is explicit instead of magical
 
 The OpenClaw references used for this v0.1 clearly support:
@@ -140,6 +149,15 @@ python3 -m atlas_evolution.cli promote --config demo/atlas.toml --proposal-id pr
 ## Verification
 
 Fixture and schema verification:
+
+```bash
+cd integrations/openclaw-plugin
+npm test
+npm run verify:fixtures
+npm run pack:dry-run
+```
+
+Repo-root verification:
 
 ```bash
 python3 integrations/openclaw-plugin/scripts/verify_payloads.py
